@@ -2,6 +2,7 @@ import heapq
 import math
 from collections import Counter, defaultdict, deque
 from dataclasses import dataclass
+from math import ceil
 from typing import Optional
 
 import networkx as nx
@@ -80,42 +81,6 @@ def walk_length(vertex_path, edge_graph):
         edge_graph[vertex_path[i]][vertex_path[i + 1]]["weight"]
         for i in range(len(vertex_path) - 1)
     )
-
-
-def tighten_vertex_path(vertex_path, edge_graph, segment_length, shorten_factor):
-    """
-    Given a path as a list of vertices, tighten it by replacing segments
-    with shortest paths in the edge graph if they are significantly shorter.
-
-    Raises:
-        networkx.NetworkXNoPath if any tightening attempt fails to find a valid path.
-
-    Returns:
-        new_vertex_path: tightened list of vertices
-    """
-    path = vertex_path[:]
-    i = 0
-
-    while i < len(path) - segment_length:
-        start = path[i]
-        end = path[i + segment_length]
-
-        shortest = nx.shortest_path(
-            edge_graph, source=start, target=end, weight="weight"
-        )
-
-        original_segment = path[i : i + segment_length + 1]
-        if (
-            walk_length(shortest, edge_graph)
-            < walk_length(original_segment, edge_graph) * shorten_factor
-        ):
-            path = path[:i] + shortest + path[i + segment_length + 1 :]
-            # stay at same i to allow overlapping improvements
-        else:
-            i += 1
-
-    assert is_valid_path(path, edge_graph), "Tightened path has broken edges"
-    return path
 
 
 @dataclass
@@ -1315,6 +1280,37 @@ class MeshPartition:
 
         return walk
 
+    @staticmethod
+    def try_shorten_segment(vertex_segment, edge_graph, shorten_factor):
+        """
+        Try to shorten a segment of a walk using the shortest path in the edge graph.
+        If the path is shorter by the given factor, return the replacement path.
+        Otherwise, return None.
+        """
+        if len(vertex_segment) < 2:
+            return vertex_segment
+
+        start, end = vertex_segment[0], vertex_segment[-1]
+
+        try:
+            path = nx.shortest_path(
+                edge_graph, source=start, target=end, weight="weight"
+            )
+        except nx.NetworkXNoPath:
+            print(
+                f"No path found between {start} and {end}. Returning original segment."
+            )
+            raise
+
+        def path_length(vs):
+            return sum(
+                edge_graph[vs[i]][vs[i + 1]]["weight"] for i in range(len(vs) - 1)
+            )
+
+        if path_length(path) < path_length(vertex_segment) * shorten_factor:
+            return path
+        return vertex_segment
+
     def tighten_boundary_walk(
         self, walk, allowed_faces, segment_length, shorten_factor
     ):
@@ -1360,29 +1356,41 @@ class MeshPartition:
             )
 
         original_walk_length = walk_length(vertex_walk)
-        print(f"Original vertex walk: {vertex_walk}, length: {original_walk_length}")
+        is_closed = vertex_walk[0] == vertex_walk[-1]
+        print(
+            f"Original vertex walk: {vertex_walk}, length: {original_walk_length}, closed: {is_closed}"
+        )
+        n = len(vertex_walk)
 
-        # --- Shorten walk by replacing segments with shortest paths ---
-        i = 0
-        while i < len(vertex_walk) - segment_length - 1:
-            start = vertex_walk[i]
-            end = vertex_walk[i + segment_length]
-            original_segment = vertex_walk[i : i + segment_length + 1]
+        segments = []
 
-            path = nx.shortest_path(
-                edge_graph, source=start, target=end, weight="weight"
-            )
-            if walk_length(path) < walk_length(original_segment) * shorten_factor:
-                vertex_walk = (
-                    vertex_walk[:i] + path + vertex_walk[i + segment_length + 1 :]
-                )
-                i += len(path) - 1
-            else:
-                i += 1
+        num_segments = (n - 1) // segment_length + 1
 
-            assert is_valid_vertex_walk(
-                vertex_walk
-            ), "Tightened vertex walk is not edge-connected."
+        if num_segments >= 2:
+
+            for i in range(num_segments):
+                start = i * segment_length
+                end = min((i + 1) * segment_length, n - 1)
+                segment = vertex_walk[start : end + 1]
+                segments.append(segment)
+            new_walk = []
+
+            for segment in segments:
+
+                if len(segment) < 2:
+                    shortened_segment = segment
+                else:
+
+                    shortened_segment = self.try_shorten_segment(
+                        segment, edge_graph, shorten_factor
+                    )
+
+                if len(new_walk) > 0 and shortened_segment[0] == new_walk[-1]:
+                    shortened_segment = shortened_segment[1:]
+
+                new_walk.extend(shortened_segment)
+
+            vertex_walk = new_walk
 
         print(f"Vertex walk after: {vertex_walk}")
         # --- Extract edge set for forbidden boundary ---
@@ -1465,192 +1473,6 @@ class MeshPartition:
             return region_a, region_b
         else:
             return region_b, region_a
-
-    # def tighten_boundary_walk(
-    #     self, walk, allowed_faces, segment_length=5, shorten_factor=0.9
-    # ):
-    #     """
-    #     Tightens a walk by replacing segments with shortest paths in the edge graph.
-
-    #     Returns:
-    #         (faces_a, faces_b): sets of triangle indices assigned to each side of the walk.
-    #         Classification is done via triangle adjacency flood-fill seeded on both sides.
-    #     """
-    #     mesh = self.mesh
-
-    #     # --- Step 1: Build edge graph from allowed_faces ---
-    #     edge_graph = nx.Graph()
-    #     for f_idx in allowed_faces:
-    #         face = mesh.faces[f_idx]
-    #         for i in range(3):
-    #             a, b = face[i], face[(i + 1) % 3]
-    #             dist = np.linalg.norm(mesh.vertices[a] - mesh.vertices[b])
-    #             edge_graph.add_edge(a, b, weight=dist)
-
-    #     def walk_length(edges):
-    #         return sum(edge_graph[u][v]["weight"] for u, v in edges)
-
-    #     # --- Step 2: Walk tightening (preserving direction) ---
-    #     def append_chain(walk_accum, chain):
-    #         last = walk_accum[-1][1]
-    #         for u, v in chain:
-    #             if u == last:
-    #                 walk_accum.append((u, v))
-    #             elif v == last:
-    #                 walk_accum.append((v, u))
-    #             else:
-    #                 raise ValueError(f"Cannot connect edge {(u, v)} to walk ending at {last}")
-
-    #     new_walk = [walk[0]]  # start with the first edge in directed form
-    #     i = 1
-    #     n = len(walk)
-    #     while i < n:
-    #         rem = n - i
-    #         if rem >= segment_length:
-    #             segment = walk[i:i + segment_length]
-    #             start = new_walk[-1][1]
-    #             end = segment[-1][1]
-
-    #             try:
-    #                 path = nx.shortest_path(edge_graph, source=start, target=end, weight="weight")
-    #             except nx.NetworkXNoPath:
-    #                 print(f"No path found between {start} and {end}, falling back to original edge.")
-    #                 append_chain(new_walk, [walk[i]])
-    #                 i += 1
-    #                 continue
-
-    #             if path[0] != new_walk[-1][1]:
-    #                 path = path[::-1]  # fix direction
-
-    #             tightened = [(path[j], path[j + 1]) for j in range(len(path) - 1)]
-
-    #             if walk_length(tightened) < walk_length(segment) * shorten_factor:
-    #                 append_chain(new_walk, tightened)
-    #                 i += segment_length
-    #             else:
-    #                 append_chain(new_walk, [walk[i]])
-    #                 i += 1
-    #         else:
-    #             append_chain(new_walk, walk[i:])
-    #             break
-
-    #     print(f"Tightened walk length: {walk_length(new_walk)}")
-    #     print(f"Original walk: {walk}\nTightened walk: {new_walk}")
-
-    #     # --- Step 3: Triangle adjacency map (for flood fill) ---
-    #     face_adjacency = defaultdict(set)
-    #     face_edges = {}
-
-    #     for f_idx in allowed_faces:
-    #         tri = mesh.faces[f_idx]
-    #         edges = {tuple(sorted((tri[i], tri[(i + 1) % 3]))) for i in range(3)}
-    #         face_edges[f_idx] = edges
-
-    #     allowed_face_list = list(allowed_faces)
-    #     for i, f_idx in enumerate(allowed_face_list):
-    #         for j in range(i + 1, len(allowed_face_list)):
-    #             g_idx = allowed_face_list[j]
-    #             if face_edges[f_idx] & face_edges[g_idx]:
-    #                 face_adjacency[f_idx].add(g_idx)
-    #                 face_adjacency[g_idx].add(f_idx)
-
-    #     def is_connected_walk(walk):
-    #         """
-    #         Verifies that the walk is a single connected edge chain (open or closed),
-    #         with no branches, islands, or multiple disjoint chains.
-    #         """
-    #         vertex_degree = defaultdict(int)
-    #         for a, b in walk:
-    #             vertex_degree[a] += 1
-    #             vertex_degree[b] += 1
-
-    #         degrees = list(vertex_degree.values())
-    #         deg1 = degrees.count(1)
-    #         deg2 = degrees.count(2)
-    #         deg_more = [d for d in degrees if d > 2]
-
-    #         # A valid walk must have only degree 2 vertices, except optionally two endpoints (degree 1)
-    #         if deg_more:
-    #             return False
-    #         return (deg1 == 2 or deg1 == 0) and (deg1 + deg2 == len(degrees))
-
-    #     assert is_connected_walk(new_walk), "Tightened walk must be a connected edge chain."
-
-    #     # --- Step 4: Find the two triangles adjacent to the first walk edge ---
-    #     first_edge = tuple(sorted(new_walk[0]))
-    #     edge_to_faces = defaultdict(set)
-    #     for f_idx in allowed_faces:
-    #         tri = mesh.faces[f_idx]
-    #         for i in range(3):
-    #             edge = tuple(sorted((tri[i], tri[(i + 1) % 3])))
-    #             edge_to_faces[edge].add(f_idx)
-
-    #     # --- Step 5: Use first walk edge to get adjacent triangles ---
-    #     first_edge = tuple(sorted(new_walk[0]))
-    #     adjacent_faces = list(edge_to_faces[first_edge])
-
-    #     if len(adjacent_faces) != 2:
-    #         raise ValueError(f"Edge {first_edge} is not shared by exactly two triangles.")
-
-    #     seed_alpha, seed_beta = adjacent_faces
-
-    #     # --- Step 5: Flood fill from both sides, not crossing walk edges ---
-    #     forbidden_edges = {tuple(sorted(e)) for e in new_walk}
-    #     visited_global = set()
-
-    #     def flood_fill(seed, forbidden_edges, visited_global, allowed_faces, forbidden_faces):
-    #         visited = set()
-    #         queue = deque([seed])
-    #         while queue:
-    #             current = queue.popleft()
-    #             if current in visited or current in visited_global:
-    #                 continue
-    #             if current not in allowed_faces:
-    #                 continue
-
-    #             visited.add(current)
-    #             visited_global.add(current)
-
-    #             # --- Correctly indent this loop ---
-    #             for neighbor in face_adjacency[current]:
-    #                 if neighbor not in allowed_faces:
-    #                     continue
-
-    #                 # only block if *any* of the shared edges is a forbidden boundary
-    #                 shared_edges = face_edges[current] & face_edges[neighbor]
-    #                 if any(e in forbidden_edges for e in shared_edges):
-    #                     continue
-
-    #                 if neighbor in forbidden_faces:
-    #                     raise ValueError(
-    #                         f"Flood fill encountered a forbidden face: {neighbor}"
-    #                     )
-    #                 queue.append(neighbor)
-
-    #         return visited
-    #     region_alpha = flood_fill(seed_alpha, forbidden_edges, visited_global, allowed_faces, forbidden_faces={seed_beta})
-    #     region_beta = flood_fill(seed_beta, forbidden_edges, visited_global, allowed_faces, forbidden_faces={seed_alpha})
-    #     print(f"Region Alpha: {len(region_alpha)} faces, Region Beta: {len(region_beta)} faces")
-
-    #     if not region_alpha or not region_beta:
-    #         raise ValueError("One side of the boundary walk could not be flood-filled. "
-    #                          "Check for isolated seeds or fully enclosed regions.")
-
-    #     assert region_alpha.isdisjoint(region_beta), "Regions A and B must be disjoint."
-
-    #     assert region_alpha | region_beta == allowed_faces,  "Flood fill must cover all allowed faces."
-
-    #     # --- Step 6: Use overlap heuristic to decide who is A or B ---
-    #     # Default to whichever has smaller face index if no better info
-    #     if min(region_alpha) < min(region_beta):
-    #         faces_a, faces_b = region_alpha, region_beta
-    #     else:
-    #         faces_a, faces_b = region_beta, region_alpha
-
-    #     assert faces_a.isdisjoint(faces_b), "Regions A and B must be disjoint."
-    #     print(f"Faces A: {len(faces_a)}, Faces B: {len(faces_b)}")
-
-    #     return faces_a, faces_b
 
     def split_region_by_polar_oriented_plane(
         self,
