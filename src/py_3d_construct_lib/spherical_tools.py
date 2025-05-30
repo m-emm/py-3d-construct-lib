@@ -2,7 +2,6 @@ import numpy as np
 from scipy.ndimage import gaussian_filter, laplace
 from scipy.spatial import Delaunay, cKDTree
 
-
 # def cartesian_to_spherical_rotated(v: np.ndarray, center: np.ndarray):
 #     v = v - center
 #     x, y, z = v
@@ -168,7 +167,7 @@ def create_shell_triangle_geometry(
             border_width=shrink_border,
         )
 
-    # Now use these six points to define a prism 
+    # Now use these six points to define a prism
     vertexes = {i: v for i, v in enumerate(cartesian_vertexes)}
     outside_vertexes = {i + 3: v for i, v in enumerate(outside_cartesian_vertexes)}
     cartesian_vertexes = {**vertexes, **outside_vertexes}
@@ -421,9 +420,6 @@ def coordinate_system_transform(origin_a, up_a, out_a, origin_b, up_b, out_b):
         "translation": tuple(translation),
     }
 
-    
-    
-
 
 def coordinate_system_transform_to_matrix(transform: dict) -> np.ndarray:
     angle = transform["rotation_angle"]
@@ -434,11 +430,9 @@ def coordinate_system_transform_to_matrix(transform: dict) -> np.ndarray:
     R = rotation_matrix_from_vectors(axis, axis)  # identity if angle == 0
     if angle != 0:
         axis /= np.linalg.norm(axis)
-        K = np.array([
-            [0, -axis[2], axis[1]],
-            [axis[2], 0, -axis[0]],
-            [-axis[1], axis[0], 0]
-        ])
+        K = np.array(
+            [[0, -axis[2], axis[1]], [axis[2], 0, -axis[0]], [-axis[1], axis[0], 0]]
+        )
         R = np.eye(3) + np.sin(angle) * K + (1 - np.cos(angle)) * (K @ K)
 
     A = np.eye(4)

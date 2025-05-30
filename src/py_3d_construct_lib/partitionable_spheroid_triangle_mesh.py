@@ -1,20 +1,19 @@
-from collections import Counter, defaultdict, deque
-from dataclasses import dataclass
 import heapq
 import math
+from collections import Counter, defaultdict, deque
+from dataclasses import dataclass
 from typing import Optional
-import numpy as np
+
 import networkx as nx
-from scipy.spatial import ConvexHull, Delaunay, cKDTree
-
-
+import numpy as np
 from py_3d_construct_lib.spherical_tools import (
     cartesian_to_spherical_jackson,
-    coordinate_system_transform_to_matrix,
-    spherical_to_cartesian_jackson,
-    rotation_matrix_from_vectors,
     coordinate_system_transform,
+    coordinate_system_transform_to_matrix,
+    rotation_matrix_from_vectors,
+    spherical_to_cartesian_jackson,
 )
+from scipy.spatial import ConvexHull, Delaunay, cKDTree
 
 
 def normalize_edge(a, b):
@@ -208,6 +207,23 @@ class PartitionableSpheroidTriangleMesh:
                 self.vertices
             ), "Vertex labels must match the number of vertices"
 
+    def get_vertex_triangles(self, vertex_index):
+        """
+        Returns a list of triangle indices that contain the given vertex.
+        """
+        triangles = []
+        for i, face in enumerate(self.faces):
+            if vertex_index in face:
+                triangles.append(i)
+        return triangles
+
+    def get_vertices_by_label(self, label):
+        """
+        Returns a list of vertex indices that have the given label.
+        """
+
+        return [i for i, v in enumerate(self.vertex_labels) if v == label]
+
     def triangle_area(self, triangle_vertex_indices):
 
         a, b, c = [self.vertices[i] for i in triangle_vertex_indices]
@@ -262,7 +278,6 @@ class PartitionableSpheroidTriangleMesh:
 
         return shell_maps
 
-
     def get_traditional_face_vertex_maps(self):
         """
         Returns a traditional face vertex map for the mesh.
@@ -272,7 +287,6 @@ class PartitionableSpheroidTriangleMesh:
             "faces": {i: tuple(face) for i, face in enumerate(self.faces)},
         }
         return maps
-    
 
     @staticmethod
     def create_shell_triangle_geometry(
@@ -282,11 +296,10 @@ class PartitionableSpheroidTriangleMesh:
         shrinkage=0.1,
         shrink_border=0,
     ):
-        
         """
         Create a shell triangle geometry from the vertices of a triangle in spherical coordinates.
         This allows materializing a shell mesh, by creating solid triangle prisms from the spherical coordinates of the triangle vertexes.
-        This is in spherical coordiates so that it is natural how to create the shell: The radius is offset by the shell_thickness, and the theta and phi are the same as the original triangle vertexes. 
+        This is in spherical coordiates so that it is natural how to create the shell: The radius is offset by the shell_thickness, and the theta and phi are the same as the original triangle vertexes.
         The resulting triangle prism for a whole mesh can then be fused to create a solid shell, which can for example be 3d-printed.
         """
 
@@ -407,7 +420,7 @@ class PartitionableSpheroidTriangleMesh:
         return cls(vertices, faces)
 
     @classmethod
-    def from_point_cloud(cls, point_cloud):
+    def from_point_cloud(cls, point_cloud, vertex_labels=None):
 
         vertices = np.array(point_cloud)
 
@@ -453,12 +466,12 @@ class PartitionableSpheroidTriangleMesh:
         if np.dot(triangle_0_normal, triangle_0_centroid) < 0:
 
             print(f"Flipping triangles to ensure outward normals.")
-        
+
             # flip all triangles
 
             triangles = [t[::-1] for t in triangles]
 
-        return cls(vertices, triangles)
+        return cls(vertices, triangles, vertex_labels=vertex_labels)
 
     @classmethod
     def create_fibonacci_sphere_mesh(cls, num_points, radius=1.0):
@@ -561,7 +574,7 @@ class MeshPartition:
             A list of vertex indices forming a closed path (first == last),
             covering all vertices in vertex_set and any minimal fillers.
         """
-        from heapq import heappush, heappop
+        from heapq import heappop, heappush
 
         V = self.mesh.vertices
         vertex_set = set(vertex_set)
@@ -712,6 +725,14 @@ class MeshPartition:
 
     def get_faces_of_region(self, region):
         return [face for face, reg in self.face_to_region_map.items() if reg == region]
+
+    def get_region_id_of_triangle(self, triangle_index):
+        """
+        Returns the region ID of the triangle with the given index.
+        """
+        if triangle_index < 0 or triangle_index >= len(self.mesh.faces):
+            raise IndexError("Triangle index out of bounds")
+        return self.face_to_region_map.get(triangle_index, None)
 
     def get_regions(self):
         return sorted(set(self.face_to_region_map.values()))
@@ -1246,7 +1267,6 @@ class MeshPartition:
                 edge = tuple(sorted((a, b)))
                 edge_to_faces[edge].append(("B", f_idx))
 
-
         # Boundary edges: shared exactly between one face in A and one in B
         boundary_edges = []
         for edge, owners in edge_to_faces.items():
@@ -1272,7 +1292,6 @@ class MeshPartition:
             )
         else:
             start = endpoints[0]
-
 
         # Traverse the walk
 
@@ -1342,7 +1361,7 @@ class MeshPartition:
 
         original_walk_length = walk_length(vertex_walk)
         print(f"Original vertex walk: {vertex_walk}, length: {original_walk_length}")
-        
+
         # --- Shorten walk by replacing segments with shortest paths ---
         i = 0
         while i < len(vertex_walk) - segment_length - 1:
@@ -1435,7 +1454,9 @@ class MeshPartition:
             region_a | region_b == allowed_faces
         ), "Flood fill did not cover all allowed faces."
 
-        print(f"Tightened walk length: {walk_length(vertex_walk)}, original: {original_walk_length}")
+        print(
+            f"Tightened walk length: {walk_length(vertex_walk)}, original: {original_walk_length}"
+        )
         print(f"Tightened vertex walk: {vertex_walk}")
         print(f"Region A: {len(region_a)} faces, Region B: {len(region_b)} faces")
 
@@ -1636,8 +1657,8 @@ class MeshPartition:
         region_id: int,
         target_area_fraction: float,
         phi: float = 0.0,
-        steps: int = 50,
         verbose: bool = False,
+        up_direction: Optional[np.ndarray] = None,
     ) -> "MeshPartition":
         """
         Rotate region to align its mean direction with Z+, apply additional Z-rotation by `phi`,
@@ -1656,8 +1677,20 @@ class MeshPartition:
 
         # Step 1: Compute average direction of region (mean of vertex positions, normalized)
         V, F, _ = view.get_transformed_vertices_faces_boundary_edges()
-        mean_vec = V.mean(axis=0)
-        mean_vec /= np.linalg.norm(mean_vec)
+
+        if up_direction is not None:
+            up_direction = np.asarray(up_direction, dtype=np.float64)
+
+            mean_vec = up_direction
+            mean_vec /= np.linalg.norm(mean_vec)
+
+        else:
+            mean_vec = V.mean(axis=0)
+
+            if np.linalg.norm(mean_vec) < 1e-6:
+                mean_vec = np.array([0, 0, 1])  # Fallback to Z+ if region is empty
+            else:
+                mean_vec /= np.linalg.norm(mean_vec)
 
         # Step 2: Rotate mean_vec to point "up" (to Z+)
         R_align = rotation_matrix_from_vectors(mean_vec, np.array([0, 0, 1]))
@@ -1745,12 +1778,14 @@ class MeshPartition:
             )
             print(f"Extracted boundary walk: {walk}")
             tightened_A, tightened_B = self.tighten_boundary_walk(
-                walk, initial_faces_A | initial_faces_B,segment_length=3, shorten_factor=0.98
+                walk,
+                initial_faces_A | initial_faces_B,
+                segment_length=4,
+                shorten_factor=0.9,
             )
             print(f"Tightened A: {tightened_A},\nTightened B: {tightened_B}")
         except ValueError as e:
-            if verbose:
-                print(f"Skipping boundary tightening: {e}")
+            print(f"Skipping boundary tightening: {e}")
 
             tightened_A = initial_faces_A
             tightened_B = initial_faces_B
