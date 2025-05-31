@@ -1950,7 +1950,7 @@ class TransformedRegionView:
             # # no vertex should be below the floor
             if not np.any(V_flat[:, 2] < -1e-5):
                 print(
-                    f"Found  good face: {face}, vertices: {V_flat[F_flat[face]]}, all other vertices are above the floor"
+                    f"Found good face: {face.tolist()}, vertices: {[V_flat[i].tolist() for i in face]}"
                 )
                 good_faces.append({"face": face, "transform": A})
 

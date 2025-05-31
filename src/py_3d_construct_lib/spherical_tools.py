@@ -414,3 +414,61 @@ def coordinate_system_transform_to_matrix(transform: dict) -> np.ndarray:
     A[:3, :3] = R
     A[:3, 3] = translation
     return A
+
+
+def matrix_to_coordinate_system_transform(matrix: np.ndarray) -> dict:
+    """
+    Given a 4x4 rigid body transform matrix (rotation + translation),
+    extract the transform dictionary used in `coordinate_system_transform`.
+
+    Parameters:
+    ----------
+    matrix : np.ndarray
+        4x4 numpy array representing a homogeneous transform matrix.
+
+    Returns:
+    -------
+    transform : dict
+        Dictionary with:
+        - 'rotation_axis': tuple[float, float, float]
+        - 'rotation_angle': float (in radians)
+        - 'translation': tuple[float, float, float]
+
+    Raises:
+    -------
+    ValueError if the matrix is not a valid rigid transformation (no scaling/shear).
+    """
+    if matrix.shape != (4, 4):
+        raise ValueError("Input must be a 4x4 transformation matrix")
+
+    R = matrix[:3, :3]
+    t = matrix[:3, 3]
+
+    # Check orthogonality and determinant
+    should_be_identity = R.T @ R
+    if not np.allclose(should_be_identity, np.eye(3), atol=1e-6):
+        raise ValueError("Rotation part is not orthogonal (may contain shear or scale)")
+
+    if not np.isclose(np.linalg.det(R), 1.0, atol=1e-6):
+        raise ValueError("Rotation part must have determinant 1 (pure rotation)")
+
+    # Compute angle
+    angle = np.arccos(np.clip((np.trace(R) - 1) / 2.0, -1.0, 1.0))
+
+    if np.isclose(angle, 0):
+        axis = np.array([1, 0, 0])  # arbitrary axis
+    elif np.isclose(angle, np.pi):
+        # Use eigenvector with eigenvalue 1
+        eigvals, eigvecs = np.linalg.eigh(R)
+        axis = eigvecs[:, np.isclose(eigvals, 1)].flatten()
+        axis /= np.linalg.norm(axis)
+    else:
+        axis = np.array([R[2, 1] - R[1, 2], R[0, 2] - R[2, 0], R[1, 0] - R[0, 1]]) / (
+            2 * np.sin(angle)
+        )
+
+    return {
+        "rotation_axis": tuple(axis),
+        "rotation_angle": float(angle),
+        "translation": tuple(t),
+    }
