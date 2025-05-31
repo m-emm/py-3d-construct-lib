@@ -1,27 +1,6 @@
 import numpy as np
 from scipy.ndimage import gaussian_filter, laplace
-from scipy.spatial import Delaunay, cKDTree
-
-# def cartesian_to_spherical_rotated(v: np.ndarray, center: np.ndarray):
-#     v = v - center
-#     x, y, z = v
-#     # rotate to local spherical frame
-#     x_, y_, z_ = x, z, y
-#     r = np.linalg.norm([x_, y_, z_])
-#     theta = np.arccos(z_ / r)
-#     phi = np.arctan2(y_, x_)
-#     return (r, theta, phi)
-
-
-# def spherical_to_cartesian_rotated(sph: tuple, center: np.ndarray, radius_offset=0):
-#     r, theta, phi = sph
-#     r += radius_offset
-#     x_ = r * np.cos(phi) * np.sin(theta)
-#     y_ = r * np.sin(phi) * np.sin(theta)
-#     z_ = r * np.cos(theta)
-#     # rotate back to global frame
-#     x, y, z = x_, z_, y_
-#     return np.array([x, y, z]) + center
+from scipy.spatial import ConvexHull, Delaunay, cKDTree
 
 
 def spherical_to_cartesian_jackson(sph: tuple, radius_offset=0, sphere_center=None):
@@ -211,10 +190,6 @@ def ray_triangle_intersect(ray_origin, ray_vector, triangle):
         return ray_origin + ray_vector * t  # Intersection point
     else:
         return None  # Line intersects but not the ray
-
-
-import numpy as np
-from scipy.spatial import ConvexHull
 
 
 def is_inside_convex_polygon_2d(polygon: np.ndarray, points: np.ndarray) -> np.ndarray:

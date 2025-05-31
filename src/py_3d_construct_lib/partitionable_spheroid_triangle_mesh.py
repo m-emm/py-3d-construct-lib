@@ -25,6 +25,15 @@ def triangle_edges(tri):
     return [(tri[i], tri[(i + 1) % 3]) for i in range(3)]
 
 
+def compute_triangle_normal(v0, v1, v2):
+    return np.cross(v1 - v0, v2 - v0)
+
+
+def normalize(v):
+    n = np.linalg.norm(v)
+    return v / n if n > 0 else v
+
+
 def calc_edge_to_triangle_map(triangles):
     edge_to_tri = defaultdict(list)
 
@@ -87,14 +96,15 @@ def walk_length(vertex_path, edge_graph):
 class ConnectorHint:
     region_a: int
     region_b: int
-    edge: tuple[int, int]  # vertex indices (v1, v2)
 
-    edge_vector: np.ndarray  # unit vector from v1 to v2
-    edge_centroid: np.ndarray  # midpoint of edge
-    triangle_a_normal: np.ndarray  # normal vector of the triangle in region_a
-    triangle_b_normal: np.ndarray  # normal vector of the triangle in region_b
-    triangle_a: tuple[int, int, int]  # vertex indices
-    triangle_b: tuple[int, int, int]  # vertex indices
+    triangle_a_vertices: tuple[np.ndarray, np.ndarray, np.ndarray]
+    triangle_b_vertices: tuple[np.ndarray, np.ndarray, np.ndarray]
+
+    triangle_a_normal: np.ndarray
+    triangle_b_normal: np.ndarray
+
+    edge_vector: np.ndarray
+    edge_centroid: np.ndarray
 
 
 def shrink_triangle(A, B, C, border_width, epsilon=1e-6):
@@ -253,6 +263,61 @@ class PartitionableSpheroidTriangleMesh:
         }
         return maps
 
+    def get_projected_inner_triangle_vertices(
+        self, face_index: int, shell_thickness: float
+    ) -> list[np.ndarray]:
+        """
+        Returns the 3 inner (projected) triangle vertices for a given face index and shell thickness.
+        """
+        face = self.faces[face_index]
+        spherical_coords = [
+            cartesian_to_spherical_jackson(self.vertices[i]) for i in face
+        ]
+        sphere_center = np.mean(self.vertices, axis=0)
+
+        return self._project_inner_triangle(
+            spherical_coords, shell_thickness, sphere_center
+        )
+
+    @staticmethod
+    def _project_inner_triangle(
+        spherical_vertexes, shell_thickness: float, sphere_center: np.ndarray
+    ):
+        """
+        Given spherical triangle vertices, projects them inward onto a parallel plane using ray-plane intersection.
+        This reproduces the inner triangle geometry for a shell.
+        """
+        assert len(spherical_vertexes) == 3
+
+        outer_verts = [
+            spherical_to_cartesian_jackson(
+                v, radius_offset=0, sphere_center=sphere_center
+            )
+            for v in spherical_vertexes
+        ]
+        v0, v1, v2 = outer_verts
+
+        tri_normal = np.cross(v1 - v0, v2 - v0)
+        tri_normal /= np.linalg.norm(tri_normal)
+
+        plane_point = v0 + (-shell_thickness) * tri_normal
+
+        def intersect_ray_plane(ray_origin, ray_dir, plane_point, plane_normal):
+            denom = np.dot(ray_dir, plane_normal)
+            if abs(denom) < 1e-8:
+                raise ValueError("Ray is parallel to plane")
+            t = np.dot(plane_point - ray_origin, plane_normal) / denom
+            return ray_origin + t * ray_dir
+
+        inner_verts = []
+        for v in outer_verts:
+            ray_dir = v - sphere_center
+            ray_dir /= np.linalg.norm(ray_dir)
+            inner = intersect_ray_plane(sphere_center, ray_dir, plane_point, tri_normal)
+            inner_verts.append(inner)
+
+        return inner_verts
+
     @staticmethod
     def create_shell_triangle_geometry(
         triangle_spherical_vertexes,
@@ -262,10 +327,9 @@ class PartitionableSpheroidTriangleMesh:
         shrink_border=0,
     ):
         """
-        Create a shell triangle geometry from the vertices of a triangle in spherical coordinates.
-        This allows materializing a shell mesh, by creating solid triangle prisms from the spherical coordinates of the triangle vertexes.
-        This is in spherical coordiates so that it is natural how to create the shell: The radius is offset by the shell_thickness, and the theta and phi are the same as the original triangle vertexes.
-        The resulting triangle prism for a whole mesh can then be fused to create a solid shell, which can for example be 3d-printed.
+        Improved version: constructs a triangle prism where the inner triangle
+        lies on a plane parallel to the outer triangle, offset by shell_thickness,
+        but vertices are projected radially from the sphere center.
         """
 
         if len(triangle_spherical_vertexes) != 3:
@@ -273,80 +337,37 @@ class PartitionableSpheroidTriangleMesh:
 
         for i in range(3):
             if len(triangle_spherical_vertexes[i]) != 3:
-                raise ValueError(
-                    "Each element of triangle_spherical_vertexes must have 3 elements (r, theta, phi)"
-                )
+                raise ValueError("Each vertex must be (r, theta, phi)")
 
-        cartesian_vertexes = [
-            spherical_to_cartesian_jackson(
-                v, radius_offset=-shell_thickness, sphere_center=sphere_center
-            )
-            for v in triangle_spherical_vertexes
-        ]
-        outside_cartesian_vertexes = [
+        outer_verts = [
             spherical_to_cartesian_jackson(
                 v, radius_offset=0, sphere_center=sphere_center
             )
             for v in triangle_spherical_vertexes
         ]
 
-        # check if the vertexes are in the right order
-        # if not, reverse the order
+        inner_verts = PartitionableSpheroidTriangleMesh._project_inner_triangle(
+            triangle_spherical_vertexes, shell_thickness, sphere_center
+        )
 
-        if (
-            np.cross(
-                cartesian_vertexes[1] - cartesian_vertexes[0],
-                cartesian_vertexes[2] - cartesian_vertexes[0],
-            )[2]
-            < 0
-        ):
-            cartesian_vertexes[1], cartesian_vertexes[2] = (
-                cartesian_vertexes[2],
-                cartesian_vertexes[1],
-            )
-            outside_cartesian_vertexes[1], outside_cartesian_vertexes[2] = (
-                outside_cartesian_vertexes[2],
-                outside_cartesian_vertexes[1],
-            )
-
-        centroid = np.sum(cartesian_vertexes, axis=0) / 6
-        centroid += np.sum(outside_cartesian_vertexes, axis=0) / 6
-
+        all_verts = outer_verts + inner_verts
+        centroid = np.mean(all_verts, axis=0)
         for i in range(3):
-            cartesian_vertexes[i] = cartesian_vertexes[i] - shrinkage * (
-                cartesian_vertexes[i] - centroid
-            )
-            outside_cartesian_vertexes[i] = outside_cartesian_vertexes[
-                i
-            ] - shrinkage * (outside_cartesian_vertexes[i] - centroid)
+            outer_verts[i] = outer_verts[i] - shrinkage * (outer_verts[i] - centroid)
+            inner_verts[i] = inner_verts[i] - shrinkage * (inner_verts[i] - centroid)
 
-        # shrink with border
+        # Optional: border shrinking
         if shrink_border > 0:
-            cartesian_vertexes[0], cartesian_vertexes[1], cartesian_vertexes[2] = (
-                shrink_triangle(
-                    cartesian_vertexes[0],
-                    cartesian_vertexes[1],
-                    cartesian_vertexes[2],
-                    border_width=shrink_border,
-                )
-            )
-            (
-                outside_cartesian_vertexes[0],
-                outside_cartesian_vertexes[1],
-                outside_cartesian_vertexes[2],
-            ) = shrink_triangle(
-                outside_cartesian_vertexes[0],
-                outside_cartesian_vertexes[1],
-                outside_cartesian_vertexes[2],
-                border_width=shrink_border,
-            )
+            outer_verts = shrink_triangle(*outer_verts, border_width=shrink_border)
+            inner_verts = shrink_triangle(*inner_verts, border_width=shrink_border)
 
-        # Now use these six points to define a prism
-        vertexes = {i: v for i, v in enumerate(cartesian_vertexes)}
-        outside_vertexes = {i + 3: v for i, v in enumerate(outside_cartesian_vertexes)}
-        cartesian_vertexes = {**vertexes, **outside_vertexes}
+        # Assemble into triangle prism
+        vertexes = {i: v for i, v in enumerate(inner_verts)}
+        outside_vertexes = {i + 3: v for i, v in enumerate(outer_verts)}
+        all_vertices = {**vertexes, **outside_vertexes}
+
         maps = {
-            "vertexes": cartesian_vertexes,
+            "vertexes": all_vertices,
             "faces": {
                 0: [0, 2, 1],  # bottom
                 1: [3, 4, 5],  # top
@@ -428,7 +449,7 @@ class PartitionableSpheroidTriangleMesh:
             + points_for_convex_hull[triangles[0][2]]
         ) / 3.0
 
-        if np.dot(triangle_0_normal, triangle_0_centroid) < 0:
+        if np.dot(triangle_0_normal, triangle_0_centroid) > 0:
 
             print(f"Flipping triangles to ensure outward normals.")
 
@@ -708,6 +729,88 @@ class MeshPartition:
             self.mesh.triangle_area(self.mesh.faces[face]) for face in faces_of_region
         )
 
+    def compute_connector_hints(self, shell_thickness) -> list[ConnectorHint]:
+        mesh = self.mesh
+        face_to_region = self.face_to_region_map
+        edge_to_faces = defaultdict(list)
+
+        for f_idx, region in face_to_region.items():
+            face = mesh.faces[f_idx]
+            for i in range(3):
+                a, b = sorted((face[i], face[(i + 1) % 3]))
+                edge_to_faces[(a, b)].append((f_idx, region))
+
+        connector_hints = []
+
+        for edge, face_region_pairs in edge_to_faces.items():
+            if len(face_region_pairs) != 2:
+                raise ValueError(f"The edge {edge} is not shared by exactly two faces.")
+
+            (f_a, r_a), (f_b, r_b) = face_region_pairs
+            if r_a == r_b:
+                continue
+
+            # Canonicalize regions
+            if r_a > r_b:
+                (f_a, r_a), (f_b, r_b) = (f_b, r_b), (f_a, r_a)
+
+            # Inner triangle geometry (projected)
+            tri_a_verts = mesh.get_projected_inner_triangle_vertices(
+                f_a, shell_thickness
+            )
+            tri_b_verts = mesh.get_projected_inner_triangle_vertices(
+                f_b, shell_thickness
+            )
+
+            # Compute normals
+            n_a = normalize(compute_triangle_normal(*tri_a_verts))
+            n_b = normalize(compute_triangle_normal(*tri_b_verts))
+
+            # Edge midpoint and vector
+            shared_indices = set(mesh.faces[f_a]) & set(mesh.faces[f_b])
+            if len(shared_indices) != 2:
+                raise ValueError(
+                    f"Shared face pair does not share exactly 2 vertices: {f_a}, {f_b}"
+                )
+
+            vi1, vi2 = list(shared_indices)
+
+            # Lookup positions from projected inner triangles
+            inner_coords = {}
+            for i, vi in enumerate(mesh.faces[f_a]):
+                inner_coords[vi] = tri_a_verts[i]
+            for i, vi in enumerate(mesh.faces[f_b]):
+                if vi not in inner_coords:
+                    inner_coords[vi] = tri_b_verts[i]
+
+            try:
+                p1 = inner_coords[vi1]
+                p2 = inner_coords[vi2]
+            except KeyError:
+                raise ValueError(
+                    f"Could not find inner positions for edge vertices {vi1}, {vi2}"
+                )
+
+            edge_vec = normalize(p2 - p1)
+            edge_mid = (p1 + p2) / 2
+
+            hint = ConnectorHint(
+                region_a=r_a,
+                region_b=r_b,
+                triangle_a_vertices=tuple(tri_a_verts),
+                triangle_b_vertices=tuple(tri_b_verts),
+                triangle_a_normal=n_a,
+                triangle_b_normal=n_b,
+                edge_vector=edge_vec,
+                edge_centroid=edge_mid,
+            )
+            connector_hints.append(hint)
+
+        return sorted(
+            connector_hints,
+            key=lambda h: (h.region_a, h.region_b, tuple(h.edge_centroid)),
+        )
+
     def get_submesh_maps(self, region_id):
 
         faces_of_region = self.get_faces_of_region(region_id)
@@ -851,7 +954,7 @@ class MeshPartition:
             print(f"Extracted boundary walk: {walk}")
             tightened_A, tightened_B = self.tighten_boundary_walk(
                 walk,
-                segment_length=3,
+                segment_length=4,
                 shorten_factor=0.99,
                 allowed_faces=initial_faces_A | initial_faces_B,
             )
