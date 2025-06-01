@@ -1981,6 +1981,83 @@ class TransformedRegionView:
 
         return new_view
 
+    def lay_flat_on_face(self, face_index_in_region: int) -> "TransformedRegionView":
+        """
+        Lay the region flat on a specific face by aligning it with the XY plane.
+        Parameters:
+        -----------
+        face_index : int
+            Index of the face to lay flat on the XY plane.
+        Returns:
+        --------
+        TransformedRegionView
+            A new view of the region with the specified face laid flat.
+        """
+
+        def normal(face):
+            a, b, c = [V[i] for i in face]
+            n = np.cross(b - a, c - a)
+            return n / np.linalg.norm(n)
+
+        V, F, _ = self.get_transformed_vertices_faces_boundary_edges()
+
+        if face_index_in_region < 0 or face_index_in_region >= len(F):
+            raise ValueError(
+                f"face_index_in_region {face_index_in_region} is out of bounds for region with {len(F)} faces."
+            )
+        face = F[face_index_in_region]
+        a, b, c = [V[i] for i in face]
+        print(f"Laying flat on face: {face}, vertices: {a}, {b}, {c}")
+        # 2) Compute centroid pivot
+        centroid = (a + b + c) / 3
+        # 3) Build rotation R that carries face_normal → [0,0,1]
+        fn = -normal(face)
+
+        target = np.array([0.0, 0.0, 1.0])
+
+        R3 = rotation_matrix_from_vectors(fn, target)  # your existing utility
+
+        # 4) Assemble the full affine A = T_z * T( +centroid ) * R * T( -centroid )
+        # 4×4 identity:
+        A = np.eye(4)
+
+        # T1 = translate(-centroid)
+        T1 = np.eye(4)
+        T1[:3, 3] = -centroid
+
+        # R4 = rotation about origin
+        R4 = np.eye(4)
+        R4[:3, :3] = R3
+
+        # T2 = translate(+centroid)
+        T2 = np.eye(4)
+        T2[:3, 3] = centroid
+
+        # Combine: first T1, then R4, then T2
+        M = T2 @ R4 @ T1
+
+        pts_face_m = [(M @ np.hstack([v, 1]).T)[:3] for v in (a, b, c)]
+        z_face = (
+            sum(p[2] for p in pts_face_m) / 3.0
+        )  # they should all be equal up to FP noise
+
+        # Build T3 to drop *that* face to Z=0
+        T3 = np.eye(4)
+        T3[2, 3] = -z_face
+
+        # Final composite
+        A = T3 @ M
+
+        to_flatten = [a, b, c]
+        to_flatten_transformed = [(A @ np.hstack([v, 1]).T) for v in to_flatten]
+
+        for v in to_flatten_transformed:
+            if not np.isclose(v[2], 0, atol=1e-5):
+                print(f"WARNING: vertex not flat: {v}")
+
+        new_view = self.apply_transform(A)
+        return new_view
+
     def check_printability(self, overhang_threshold_deg: float = 45.0):
         """
         Check 3D printability of the region: identify triangles with too-steep overhangs.
