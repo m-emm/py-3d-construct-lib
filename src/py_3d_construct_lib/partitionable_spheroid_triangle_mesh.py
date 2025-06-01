@@ -449,7 +449,7 @@ class PartitionableSpheroidTriangleMesh:
             + points_for_convex_hull[triangles[0][2]]
         ) / 3.0
 
-        if np.dot(triangle_0_normal, triangle_0_centroid) > 0:
+        if np.dot(triangle_0_normal, triangle_0_centroid) < 0:
 
             print(f"Flipping triangles to ensure outward normals.")
 
