@@ -1,8 +1,8 @@
 import numpy as np
 from py_3d_construct_lib.partitionable_spheroid_triangle_mesh import (
     PartitionableSpheroidTriangleMesh,
-    TransformedRegionView,
 )
+from py_3d_construct_lib.transformed_region_view import TransformedRegionView
 
 
 def test_split_region_by_cap():

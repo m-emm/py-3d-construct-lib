@@ -1,13 +1,8 @@
-import importlib
-import json
 import sys
 from pathlib import Path
 from types import SimpleNamespace
 
-import mege_freecad_utils.spherical_tools
 import numpy as np
-import trimesh
-from scipy.spatial import ConvexHull
 
 freecad_utils_path = "/Users/mege/git/mege_3d/freecad/mege_freecad_utils"
 
@@ -16,10 +11,7 @@ parent_dir = str(Path(freecad_utils_path).parent)
 if parent_dir not in sys.path:
     sys.path.insert(0, parent_dir)
 
-importlib.reload(mege_freecad_utils.spherical_tools)
-
-
-from mege_freecad_utils.spherical_tools import (
+from py_3d_construct_lib.spherical_tools import (
     cartesian_to_spherical_jackson,
     filter_outside_spherical_cap,
     spherical_to_cartesian_jackson,
