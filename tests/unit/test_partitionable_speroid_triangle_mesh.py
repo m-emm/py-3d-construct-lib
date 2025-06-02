@@ -247,6 +247,71 @@ def test_perforate_along_plane_tetrahedron():
         ), f"Expected one vertex for edge {pair}, got {candidates}"
 
 
+def test_perforate_along_plane_tetrahedron_partial():
+    # Define tetrahedron vertices
+    vertices = np.array(
+        [
+            [1, 1, 1],  # 0
+            [-1, -1, 1],  # 1
+            [-1, 1, -1],  # 2
+            [1, -1, -1],  # 3
+        ]
+    )
+    faces = np.array(
+        [
+            [0, 1, 2],  # face 0
+            [0, 3, 1],  # face 1
+            [0, 2, 3],  # face 2
+            [1, 3, 2],  # face 3
+        ]
+    )
+    labels = ["A", "B", "C", "D"]
+
+    mesh = PartitionableSpheroidTriangleMesh(vertices, faces, vertex_labels=labels)
+
+    plane_origin = np.array([0.0, 0.0, 0.0])
+    plane_normal = np.array([1.0, 0.0, 0.0])
+
+    # Only perforate triangle 0
+    triangle_indices = [0]
+    cut_mesh, face_index_map = mesh._perforate_along_plane_bulk(
+        plane_origin, plane_normal, epsilon=1e-9, triangle_indices=triangle_indices
+    )
+
+    # Check that new vertices are inserted for edges [0,1] and [0,2], but not for others
+    expected_cut_labels = {"A__B", "A__C", "B__A", "C__A"}
+    found_cut_labels = set(l for l in cut_mesh.vertex_labels if "__" in l)
+    assert (
+        found_cut_labels <= expected_cut_labels
+    ), f"Unexpected cut labels: {found_cut_labels}"
+
+    # Ensure expected faces are subdivided
+    old_faces_per_subdivided = {k: v for k, v in face_index_map.items() if len(v) > 1}
+    expected_split_faces = {0, 1, 2}
+    assert (
+        set(old_faces_per_subdivided.keys()) == expected_split_faces
+    ), f"Expected faces {expected_split_faces} to be split, got {old_faces_per_subdivided}"
+    # Faces that should be split due to shared edges with triangle 0
+    expected_split_faces = {0, 1, 2}
+    for i in range(4):
+        if i in expected_split_faces:
+            assert len(face_index_map[i]) > 1, f"Face {i} should be split"
+        else:
+            assert len(face_index_map[i]) == 1, f"Face {i} should not be split"
+
+    # Confirm labels exist for both new cut edges
+    for a, b in [("A", "B"), ("A", "C")]:
+        candidates = cut_mesh.get_vertices_by_label(f"{a}__{b}")
+        if not candidates:
+            candidates = cut_mesh.get_vertices_by_label(f"{b}__{a}")
+        assert len(candidates) == 1, f"Missing or duplicate cut vertex on edge {a}-{b}"
+
+    _logger.info(
+        f"Cut mesh: {len(cut_mesh.vertices)} vertices, {len(cut_mesh.faces)} faces"
+    )
+    _logger.info(f"Cut labels: {cut_mesh.vertex_labels}")
+
+
 def test_perforate_along_plane_dodecahedron():
 
     points, _ = create_dodecahedron_geometry(1.0)

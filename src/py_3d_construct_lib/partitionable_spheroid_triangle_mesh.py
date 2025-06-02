@@ -612,21 +612,29 @@ class PartitionableSpheroidTriangleMesh:
 
         return canon_faces
 
-    def _perforate_along_plane_bulk(self, plane_point, plane_normal, epsilon):
+    def _perforate_along_plane_bulk(
+        self, plane_point, plane_normal, epsilon, triangle_indices=None
+    ):
         V_orig = self.vertices
         F_orig = self.faces
         labels_orig = self.vertex_labels
 
+        all_tri_indices = range(len(F_orig))
+        triangle_indices = set(
+            all_tri_indices if triangle_indices is None else triangle_indices
+        )
+
         face_index_mapping = {}
 
-        # Step 1: Find all intersected edges and compute new vertices
+        # Step 1: Find intersected edges and compute new vertices
         edge_to_cutpoint_index = {}
         new_vertices = []
         new_labels = []
         next_index = len(V_orig)
         seen_edges = set()
 
-        for tri in F_orig:
+        for tri_idx in triangle_indices:
+            tri = F_orig[tri_idx]
             for a, b in triangle_edges(tri):
                 edge = normalize_edge(a, b)
                 if edge in seen_edges:
@@ -649,13 +657,37 @@ class PartitionableSpheroidTriangleMesh:
                     new_labels.append(f"{labels_orig[edge[0]]}__{labels_orig[edge[1]]}")
                     next_index += 1
 
-        # Step 2: Combine original and new vertices/labels
-        V_new = np.vstack([V_orig, np.array(new_vertices)])
+        # --- Step 1.5: Expand triangle_indices to include all triangles that touch cut edges
+        if edge_to_cutpoint_index:
+            edge_to_tri_indices = defaultdict(set)
+            for tri_idx, tri in enumerate(F_orig):
+                for edge in triangle_edges(tri):
+                    norm_edge = normalize_edge(*edge)
+                    edge_to_tri_indices[norm_edge].add(tri_idx)
+
+            affected_tri_indices = set()
+            for cut_edge in edge_to_cutpoint_index:
+                affected_tri_indices.update(edge_to_tri_indices[cut_edge])
+
+            triangle_indices.update(affected_tri_indices)
+
+        # Step 2: Combine old and new vertices
+        V_new = (
+            np.vstack([V_orig, np.array(new_vertices)])
+            if new_vertices
+            else V_orig.copy()
+        )
         labels_new = labels_orig + new_labels
 
-        # Step 3: Subdivide triangles using split_triangle_topologically
+        # Step 3: Subdivide triangles
         F_new = []
         for orig_index, tri in enumerate(F_orig):
+            if orig_index not in triangle_indices:
+                # Keep untouched triangle as-is
+                face_index_mapping[orig_index] = [len(F_new)]
+                F_new.append(tuple(tri))
+                continue
+
             edge_to_new_vertex = {}
             for edge in triangle_edges(tri):
                 norm_edge = normalize_edge(*edge)
@@ -663,7 +695,6 @@ class PartitionableSpheroidTriangleMesh:
                     edge_to_new_vertex[norm_edge] = edge_to_cutpoint_index[norm_edge]
 
             new_tris = split_triangle_topologically(tri, edge_to_new_vertex)
-
             new_face_indices = []
             for t in new_tris:
                 new_index = len(F_new)
@@ -672,10 +703,10 @@ class PartitionableSpheroidTriangleMesh:
 
             face_index_mapping[orig_index] = new_face_indices
 
-        # Step 4: Final validation and canonicalization
+        # Step 4: Canonicalize and validate
         F_new = self.canonicalize_faces(F_new)
 
-        f_new_set = set([tuple(sorted(f)) for f in F_new])
+        f_new_set = set(tuple(sorted(f)) for f in F_new)
         if len(f_new_set) != len(F_new):
             raise ValueError("Generated faces are not unique, there are duplicates.")
 
