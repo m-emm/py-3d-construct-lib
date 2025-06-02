@@ -274,7 +274,7 @@ def test_perforate_along_plane_tetrahedron_partial():
 
     # Only perforate triangle 0
     triangle_indices = [0]
-    cut_mesh, face_index_map = mesh._perforate_along_plane_bulk(
+    cut_mesh, face_index_map = mesh.perforate_along_plane(
         plane_origin, plane_normal, epsilon=1e-9, triangle_indices=triangle_indices
     )
 

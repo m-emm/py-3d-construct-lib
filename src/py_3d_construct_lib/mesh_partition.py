@@ -1279,3 +1279,64 @@ class MeshPartition:
                 new_face_to_region_map[new_face] = region
 
         return MeshPartition(new_mesh, new_face_to_region_map)
+
+    def perforate_and_split_region_by_plane(
+        self,
+        region_id: int,
+        plane_point: np.ndarray,
+        plane_normal: np.ndarray,
+    ) -> "MeshPartition":
+        """
+        Perforate and split a specific region by a plane.
+
+        Parameters
+        ----------
+        region_id : int
+            The region to be split.
+        plane_point : np.ndarray
+            A point on the plane.
+        plane_normal : np.ndarray
+            The normal vector of the plane.
+
+        Returns
+        -------
+        MeshPartition
+            A new mesh partition with the region split along the given plane.
+        """
+        # Step 1: Collect triangle indices of this region
+        region_faces = [
+            face_idx
+            for face_idx, r in self.face_to_region_map.items()
+            if r == region_id
+        ]
+
+        # Step 2: Perforate only that region
+        new_mesh, face_index_map = self.mesh.perforate_along_plane(
+            plane_point, plane_normal, epsilon=1e-9, triangle_indices=region_faces
+        )
+
+        # Step 3: Classify faces by side of plane
+        new_face_to_region = {}
+        max_region_id = max(self.face_to_region_map.values())
+        new_region_id = max_region_id + 1
+
+        for old_face_idx, new_face_indices in face_index_map.items():
+            old_region = self.face_to_region_map[old_face_idx]
+            if old_region != region_id:
+                # This face was not part of the region to split → copy directly
+                for new_face_idx in new_face_indices:
+                    new_face_to_region[new_face_idx] = old_region
+                continue
+
+            # Classify new faces by centroid
+            for new_face_idx in new_face_indices:
+                face = new_mesh.faces[new_face_idx]
+                centroid = new_mesh.vertices[face].mean(axis=0)
+                signed_distance = np.dot(centroid - plane_point, plane_normal)
+
+                if signed_distance >= 0:
+                    new_face_to_region[new_face_idx] = region_id
+                else:
+                    new_face_to_region[new_face_idx] = new_region_id
+
+        return MeshPartition(new_mesh, new_face_to_region)

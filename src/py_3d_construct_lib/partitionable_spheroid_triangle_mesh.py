@@ -581,11 +581,6 @@ class PartitionableSpheroidTriangleMesh:
 
         return PartitionableSpheroidTriangleMesh(new_vertices, new_faces, new_labels)
 
-    def perforate_along_plane(
-        self, plane_point: np.ndarray, plane_normal: np.ndarray, epsilon: float = 1e-8
-    ):
-        return self._perforate_along_plane_bulk(plane_point, plane_normal, epsilon)
-
     @staticmethod
     def canonicalize_faces(faces: np.ndarray) -> np.ndarray:
         """
@@ -612,8 +607,8 @@ class PartitionableSpheroidTriangleMesh:
 
         return canon_faces
 
-    def _perforate_along_plane_bulk(
-        self, plane_point, plane_normal, epsilon, triangle_indices=None
+    def perforate_along_plane(
+        self, plane_point, plane_normal, epsilon=1e-8, triangle_indices=None
     ):
         V_orig = self.vertices
         F_orig = self.faces
