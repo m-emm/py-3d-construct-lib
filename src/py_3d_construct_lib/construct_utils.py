@@ -116,3 +116,122 @@ def create_dodecahedron_geometry(radius=1.0):
     )
 
     return verts, faces
+
+
+import math
+from collections import Counter
+from typing import Dict, List, Set, Tuple
+
+Vertex = int
+Triangle = Tuple[Vertex, Vertex, Vertex]
+Edge = Tuple[Vertex, Vertex]
+NewVertexMapping = Dict[Edge, Vertex]
+
+
+def triangle_edges(tri: Triangle) -> List[Edge]:
+    return [(tri[i], tri[(i + 1) % 3]) for i in range(3)]
+
+
+def normalize_edge(a: int, b: int) -> Edge:
+    return (a, b) if a < b else (b, a)
+
+
+def compute_area(p1, p2, p3):
+    """Returns area of triangle with vertices p1, p2, p3 in 2D"""
+    return abs(
+        (p1[0] * (p2[1] - p3[1]) + p2[0] * (p3[1] - p1[1]) + p3[0] * (p1[1] - p2[1]))
+        / 2
+    )
+
+
+def rotate_triangle(tri: Tuple[int, int, int], k: int) -> Tuple[int, int, int]:
+    return (tri[k % 3], tri[(k + 1) % 3], tri[(k + 2) % 3])
+
+
+def split_triangle_topologically(tri, edge_to_new_vertex, perform_area_check=True):
+    original_edges = [
+        (tri[0], tri[1]),
+        (tri[1], tri[2]),
+        (tri[2], tri[0]),
+    ]
+
+    split_flags = [normalize_edge(*e) in edge_to_new_vertex for e in original_edges]
+
+    # Find the rotation offset so that all split edges come first
+    def count_split_flags(flags):  # how many split edges from the front
+        count = 0
+        for f in flags:
+            if f:
+                count += 1
+            else:
+                break
+        return count
+
+    best_offset = max(
+        range(3), key=lambda k: count_split_flags(split_flags[k:] + split_flags[:k])
+    )
+
+    tri_rot = rotate_triangle(tri, best_offset)
+    edge_rot = [
+        (tri_rot[0], tri_rot[1]),
+        (tri_rot[1], tri_rot[2]),
+        (tri_rot[2], tri_rot[0]),
+    ]
+
+    # Assign local indices 0, 1, 2 to rotated triangle
+    local_to_global = {0: tri_rot[0], 1: tri_rot[1], 2: tri_rot[2]}
+
+    edge_to_local = {
+        normalize_edge(0, 1): 3,
+        normalize_edge(1, 2): 4,
+        normalize_edge(2, 0): 5,
+    }
+
+    for local_edge, new_local_index in edge_to_local.items():
+        # Map back to global edge
+        global_edge = normalize_edge(
+            local_to_global[local_edge[0]], local_to_global[local_edge[1]]
+        )
+        if global_edge in edge_to_new_vertex:
+            v_new = edge_to_new_vertex[global_edge]
+            local_to_global[new_local_index] = v_new
+
+    # Determine case and return triangles as before
+    num_splits = sum([normalize_edge(*e) in edge_to_new_vertex for e in edge_rot])
+
+    CASE_TO_LOCAL_TRIANGLES = {
+        0: [[0, 1, 2]],
+        1: [[0, 3, 2], [3, 1, 2]],
+        2: [[0, 3, 4], [3, 1, 4], [4, 2, 0]],
+        3: [[0, 3, 5], [3, 4, 5], [3, 1, 4], [4, 2, 5]],
+    }
+
+    local_tris = CASE_TO_LOCAL_TRIANGLES[num_splits]
+    final_tris = [[local_to_global[i] for i in tri] for tri in local_tris]
+
+    # Optionally check area
+    if perform_area_check:
+        coords = {
+            tri_rot[0]: (0.0, 0.0),
+            tri_rot[1]: (1.0, 0.0),
+            tri_rot[2]: (0.5, math.sqrt(3) / 2),
+        }
+        for i in range(3):
+            a, b = edge_rot[i]
+            canon = normalize_edge(a, b)
+            if canon in edge_to_new_vertex:
+                mid = edge_to_new_vertex[canon]
+                pa = coords[a]
+                pb = coords[b]
+                coords[mid] = ((pa[0] + pb[0]) / 2, (pa[1] + pb[1]) / 2)
+
+        original_area = compute_area(
+            coords[tri_rot[0]], coords[tri_rot[1]], coords[tri_rot[2]]
+        )
+        new_area = sum(
+            compute_area(coords[a], coords[b], coords[c]) for (a, b, c) in final_tris
+        )
+        if not math.isclose(original_area, new_area, rel_tol=1e-9):
+            raise ValueError(f"Area mismatch: original {original_area}, new {new_area}")
+
+    return final_tris

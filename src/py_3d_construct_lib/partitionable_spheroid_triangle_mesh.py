@@ -4,8 +4,10 @@ from collections import Counter, defaultdict, deque
 
 import numpy as np
 from py_3d_construct_lib.construct_utils import (
+    compute_area,
     compute_barycentric_coords,
     normalize_edge,
+    split_triangle_topologically,
     triangle_edges,
 )
 from py_3d_construct_lib.mesh_partition import MeshPartition
@@ -611,554 +613,61 @@ class PartitionableSpheroidTriangleMesh:
         return canon_faces
 
     def _perforate_along_plane_bulk(self, plane_point, plane_normal, epsilon):
-
-        def check_directed_edge_duplicates(faces):
-
-            directed_edges = []
-
-            for f in faces:
-                directed_edges.extend(triangle_edges(f))
-
-            directed_edge_by_canonical_edge = defaultdict(list)
-            for a, b in directed_edges:
-                canonical_edge = normalize_edge(a, b)
-                directed_edge_by_canonical_edge[canonical_edge].append((a, b))
-
-            for (
-                canonical_edge,
-                directed_edges_for_canonical_edge,
-            ) in directed_edge_by_canonical_edge.items():
-                count = len(directed_edges_for_canonical_edge)
-                if count != 2:
-                    _logger.info(
-                        f"❌ Edge {canonical_edge} appears {count} times, expected 2"
-                    )
-
-                unique_edges = set(directed_edges_for_canonical_edge)
-                if len(unique_edges) != count:
-                    _logger.info(
-                        f"❌ Edge {canonical_edge} has non-unique directed edges: {directed_edges_for_canonical_edge}"
-                    )
-
         V_orig = self.vertices
         F_orig = self.faces
         labels_orig = self.vertex_labels
-        _logger.info(f"Checking directed edge duplicates in original mesh\n\n")
-        check_directed_edge_duplicates(F_orig)
 
-        # Step 1: find every intersected edge, record one new vertex per edge
+        # Step 1: Find all intersected edges and compute new vertices
         edge_to_cutpoint_index = {}
         new_vertices = []
         new_labels = []
         next_index = len(V_orig)
-
         seen_edges = set()
-        for tri in F_orig:
-            for k in range(3):
-                a = tri[k]
-                b = tri[(k + 1) % 3]
-                current_edge = normalize_edge(a, b)
-                if current_edge in seen_edges:
-                    continue
-                seen_edges.add(current_edge)
 
-                Va = V_orig[current_edge[0]]
-                Vb = V_orig[current_edge[1]]
+        for tri in F_orig:
+            for a, b in triangle_edges(tri):
+                edge = normalize_edge(a, b)
+                if edge in seen_edges:
+                    continue
+                seen_edges.add(edge)
+
+                Va, Vb = V_orig[edge[0]], V_orig[edge[1]]
                 d = Vb - Va
                 w = Va - plane_point
                 denom = np.dot(plane_normal, d)
+
                 if abs(denom) < epsilon:
-                    continue
+                    continue  # edge is parallel to plane
 
                 t = -np.dot(plane_normal, w) / denom
                 if 0 < t < 1:
                     ipt = (1 - t) * Va + t * Vb
-                    edge_to_cutpoint_index[current_edge] = next_index
+                    edge_to_cutpoint_index[edge] = next_index
                     new_vertices.append(ipt)
-                    lbl = f"{labels_orig[current_edge[0]]}__{labels_orig[current_edge[1]]}"
-                    new_labels.append(lbl)
+                    new_labels.append(f"{labels_orig[edge[0]]}__{labels_orig[edge[1]]}")
                     next_index += 1
 
-        # Build the new vertex‐array and label‐list
+        # Step 2: Combine original and new vertices/labels
         V_new = np.vstack([V_orig, np.array(new_vertices)])
         labels_new = labels_orig + new_labels
 
-        # Step 2: rebuild faces
+        # Step 3: Subdivide triangles using split_triangle_topologically
         F_new = []
-        orig_area_sign_cache = {}
-
-        seen_directed_edges = set()
-
-        for tri_index, tri in enumerate(F_orig):
-
-            _logger.info(
-                f"\n**************\nProcessing triangle index {tri_index}: {tri}\n***************\n"
-            )
-
-            current_triangle_edges = triangle_edges(tri)
-
-            canonical_triangle_edges = [
-                normalize_edge(*edge) for edge in current_triangle_edges
-            ]
-
-            cuts = []
-            for i, edge in enumerate(canonical_triangle_edges):
-                if edge in edge_to_cutpoint_index:
-                    new_idx = edge_to_cutpoint_index[edge]
-                    _logger.info(f"Adding cut at edge {edge} with new index {new_idx}")
-                    cuts.append((i, (i + 1) % 3, new_idx))
-
-            k = len(cuts)
-            _logger.info(f"\nk={k}\nCuts: {cuts} for triangle {tri}")
-
-            if k == 0:
-                # no subdivision
-                F_new.append(tri.tolist())
-
-                if any(edge in seen_directed_edges for edge in current_triangle_edges):
-                    raise ValueError(
-                        "Generated triangle has edges that were already seen, this should not happen."
-                    )
-
-                seen_directed_edges.update(current_triangle_edges)
-
-            elif k == 1:
-                new_vertices = []
-                _logger.info(f"Edge to cutpoint index: {edge_to_cutpoint_index}")
-                edges_to_keep = []
-                new_edges = []
-
-                for i in range(3):
-                    current_edge = (tri[i], tri[(i + 1) % 3])
-
-                    current_canonical_edge = normalize_edge(*current_edge)
-                    if current_canonical_edge not in edge_to_cutpoint_index:
-                        _logger.info(
-                            f"Edge {current_canonical_edge} not in edge_to_cutpoint_index, keeping as is, adding {current_edge} to edges_to_keep"
-                        )
-                        edges_to_keep.append(current_edge)
-                    else:
-                        _logger.info(
-                            f"Edge {current_canonical_edge} is in edge_to_cutpoint_index"
-                        )
-
-                        new_vertex_on_this_edge = edge_to_cutpoint_index[
-                            current_canonical_edge
-                        ]
-
-                        new_edges.append((current_edge[0], new_vertex_on_this_edge))
-                        new_edges.append((new_vertex_on_this_edge, current_edge[1]))
-                        new_vertices.append(new_vertex_on_this_edge)
-
-                _logger.info(
-                    f"Processing triangle {tri}  in k==1 with cuts: {cuts}, edges(non-canonical): {triangle_edges(tri)}"
-                )
-
-                assert len(edges_to_keep) == 2, "Expected exactly two edges to keep"
-
-                shared_vertex = [
-                    v
-                    for v, count in Counter(
-                        [e[0] for e in edges_to_keep] + [e[1] for e in edges_to_keep]
-                    ).items()
-                    if count > 1
-                ][0]
-                _logger.info(f"Shared vertex in edges_to_keep: {shared_vertex}")
-                new_edge = (shared_vertex, new_vertices[0])
-                new_edges.append(new_edge)
-
-                _logger.info(
-                    f"Edges to keep: {edges_to_keep}, New edges: {new_edges}, new_vertices: {new_vertices}"
-                )
-
-                edges_by_start_vertex = defaultdict(set)
-                possible_edges = set(sorted((edges_to_keep + new_edges)))
-                for e in possible_edges:
-                    edges_by_start_vertex[e[0]].add(e)
-
-                _logger.info(
-                    f"Possible edges: {possible_edges}, \nedges_by_start_vertex:\n{edges_by_start_vertex}"
-                )
-
-                triangle_0_edges = []
-                triangle_0_edges.append(edges_to_keep[0])
-
-                _logger.info(f"Initial triangle_0_edges: {triangle_0_edges}")
-
-                triangle_0_continuation_vertex = triangle_0_edges[0][1]
-                triangle_0_edge_candidates = edges_by_start_vertex[
-                    triangle_0_continuation_vertex
-                ]
-
-                _logger.info(
-                    f"Initial triangle_0_edge_candidates: {triangle_0_edge_candidates}, looked for edges starting at vertex {triangle_0_continuation_vertex}"
-                )
-
-                triangle_0_edge_candidates = [
-                    e for e in triangle_0_edge_candidates if e not in edges_to_keep
-                ]
-
-                _logger.info(
-                    f"Filtered triangle_0_edge_candidates: {triangle_0_edge_candidates}"
-                )
-
-                _logger.info(
-                    f"Found {len(triangle_0_edge_candidates)} candidates starting at vertex {edge_to_keep[1]}: {triangle_0_edge_candidates}"
-                )
-                if len(triangle_0_edge_candidates) != 1:
-                    raise ValueError(
-                        f"Expected exactly one edge to connect to {edge_to_keep[1]}, found {len(triangle_0_edge_candidates)}"
-                    )
-                triangle_0_edges.append(next(qq for qq in triangle_0_edge_candidates))
-                triangle_0_edges.append(
-                    (triangle_0_edges[-1][1], triangle_0_edges[0][0])
-                )
-
-                triangle_0_vertex_indices = [edge[0] for edge in triangle_0_edges]
-                _logger.info(f"Triangle 0 is {triangle_0_vertex_indices}")
-
-                currently_used_edges = set()
-                currently_used_edges.update(
-                    [
-                        normalize_edge(*edge)
-                        for edge in triangle_edges(triangle_0_vertex_indices)
-                    ]
-                )
-
-                currently_used_non_canonical_edges = set(
-                    triangle_edges(triangle_0_vertex_indices)
-                )
-
-                currently_used_edges = set(
-                    normalize_edge(*edge) for edge in currently_used_non_canonical_edges
-                )
-
-                for used_edge in triangle_edges(triangle_0_vertex_indices):
-                    # reverse edges now become available
-                    possible_edges.add((used_edge[1], used_edge[0]))
-
-                for e in possible_edges:
-                    edges_by_start_vertex[e[0]].add(e)
-
-                _logger.info(
-                    f"Possible edges after triangle 0: {possible_edges}, currently_used_non_canonical_edges: {currently_used_non_canonical_edges} currently_used_edges    : {currently_used_edges}"
-                )
-
-                triangle_1_edges = []
-
-                triangle_1_edges.append(edges_to_keep[1])
-                _logger.info(f"Triangle 1 edges so far: {triangle_1_edges}")
-
-                triangle_1_edge_candiates_2 = edges_by_start_vertex[
-                    triangle_1_edges[0][1]
-                ]
-                _logger.info(
-                    f"Found {len(triangle_1_edge_candiates_2)} triangle_1_edge_candiates_2 starting at vertex {triangle_1_edges[0][1]}: {triangle_1_edge_candiates_2}"
-                )
-
-                triangle_1_edge_candiates_2 = [
-                    e
-                    for e in triangle_1_edge_candiates_2
-                    if e not in currently_used_non_canonical_edges
-                ]
-
-                _logger.info(
-                    f"Filtered triangle_1_edge_candiates_2: {triangle_1_edge_candiates_2}"
-                )
-
-                if len(triangle_1_edge_candiates_2) != 1:
-                    raise ValueError(
-                        f"Expected exactly one edge to connect to {triangle_1_edges[0][1]}, found {len(triangle_1_edge_candiates_2)}"
-                    )
-                triangle_1_edges.append(next(qq for qq in triangle_1_edge_candiates_2))
-
-                triangle_1_edges.append(
-                    (triangle_1_edges[-1][1], triangle_1_edges[0][0])
-                )
-                triangle_1_vertex_indices = [edge[0] for edge in triangle_1_edges]
-
-                currently_used_non_canonical_edges.update(
-                    triangle_edges(triangle_1_vertex_indices)
-                )
-
-                for used_edge in triangle_edges(triangle_1_vertex_indices):
-                    # reverse edges now become available
-                    possible_edges.add((used_edge[1], used_edge[0]))
-
-                for e in possible_edges:
-                    edges_by_start_vertex[e[0]].add(e)
-
-                _logger.info(f"Triangle 1 is {triangle_1_vertex_indices}")
-
-                new_triangles = [
-                    triangle_0_vertex_indices,
-                    triangle_1_vertex_indices,
-                ]
-
-                _logger.info(f"New triangles for {tri}: {new_triangles}")
-
-                all_new_edges_canonical = set()
-
-                for new_tri in new_triangles:
-                    new_edges = triangle_edges(new_tri)
-
-                    for edge in new_edges:
-                        if edge in seen_directed_edges:
-                            raise ValueError(
-                                f"Edge {edge} already seen, this should not happen."
-                            )
-                        normalized_edge = normalize_edge(*edge)
-
-                        all_new_edges_canonical.add(normalized_edge)
-
-                _logger.info(
-                    f"All new edges (canonical): {all_new_edges_canonical}, edge_to_cutpoint_index: {edge_to_cutpoint_index}"
-                )
-
-                if any(
-                    edge in edge_to_cutpoint_index for edge in all_new_edges_canonical
-                ):
-                    raise ValueError(
-                        "Generated triangles contain edges that were already cut, this should not happen."
-                    )
-
-                F_new.extend(new_triangles)
-
-            elif k == 2:
-
-                # Triangle indices
-                new_vertices = []
-                _logger.info(f"Edge to cutpoint index: {edge_to_cutpoint_index}")
-                edges_to_keep = []
-                new_edges = []
-
-                for i in range(3):
-
-                    current_edge = (tri[i], tri[(i + 1) % 3])
-
-                    current_canonical_edge = normalize_edge(*current_edge)
-                    if current_canonical_edge not in edge_to_cutpoint_index:
-                        _logger.info(
-                            f"Edge {current_canonical_edge} not in edge_to_cutpoint_index, keeping as is, adding {current_edge} to edges_to_keep"
-                        )
-                        edges_to_keep.append(current_edge)
-                    else:
-                        _logger.info(
-                            f"Edge {current_canonical_edge} is in edge_to_cutpoint_index"
-                        )
-
-                        new_vertex_on_this_edge = edge_to_cutpoint_index[
-                            current_canonical_edge
-                        ]
-
-                        new_edges.append((current_edge[0], new_vertex_on_this_edge))
-                        new_edges.append((new_vertex_on_this_edge, current_edge[1]))
-                        new_vertices.append(new_vertex_on_this_edge)
-
-                _logger.info(
-                    f"Processing triangle {tri} with cuts: {cuts}, edges(non-canonical): {triangle_edges(tri)}"
-                )
-                _logger.info(
-                    f"Edges to keep: {edges_to_keep}, New edges: {new_edges}, new_vertices: {new_vertices}"
-                )
-
-                assert len(edges_to_keep) == 1, "Expected exactly one edge to keep"
-
-                edge_to_keep = edges_to_keep[0]
-
-                edges_by_start_vertex = defaultdict(set)
-                possible_edges = set(sorted((edges_to_keep + new_edges)))
-                for e in possible_edges:
-                    edges_by_start_vertex[e[0]].add(e)
-
-                _logger.info(
-                    f"Possible edges: {possible_edges}, \nedges_by_start_vertex:\n{edges_by_start_vertex}"
-                )
-
-                triangle_0_edges = []
-                triangle_0_edges.append(edge_to_keep)
-                triangle_0_edge_candidates = edges_by_start_vertex[edge_to_keep[1]]
-                _logger.info(
-                    f"Found {len(triangle_0_edge_candidates)} candidates starting at vertex {edge_to_keep[1]}: {triangle_0_edge_candidates}"
-                )
-                if len(triangle_0_edge_candidates) != 1:
-                    raise ValueError(
-                        f"Expected exactly one edge to connect to {edge_to_keep[1]}, found {len(triangle_0_edge_candidates)}"
-                    )
-                triangle_0_edges.append(next(qq for qq in triangle_0_edge_candidates))
-                triangle_0_edges.append(
-                    (triangle_0_edges[-1][1], triangle_0_edges[0][0])
-                )
-
-                triangle_0_vertex_indices = [edge[0] for edge in triangle_0_edges]
-                _logger.info(f"Triangle 0 is {triangle_0_vertex_indices}")
-
-                currently_used_edges = set()
-                currently_used_edges.update(
-                    [
-                        normalize_edge(*edge)
-                        for edge in triangle_edges(triangle_0_vertex_indices)
-                    ]
-                )
-
-                currently_used_non_canonical_edges = set(
-                    triangle_edges(triangle_0_vertex_indices)
-                )
-
-                for used_edge in triangle_edges(triangle_0_vertex_indices):
-                    # reverse edges now become available
-                    possible_edges.add((used_edge[1], used_edge[0]))
-
-                _logger.info(
-                    f"currently_used_non_canonical_edges after triangle 0: {currently_used_non_canonical_edges}"
-                )
-                triangle_1_edges = []
-                triangle_1_edge_candidates = edges_by_start_vertex[
-                    triangle_0_edges[1][1]
-                ]
-
-                _logger.info(
-                    f"Found {len(triangle_1_edge_candidates)} candidates starting at vertex {  triangle_0_edges[1][1]}: {triangle_1_edge_candidates}"
-                )
-
-                if len(triangle_1_edge_candidates) != 1:
-                    raise ValueError(
-                        f"Expected exactly one edge to connect to {triangle_0_edges[1][1]}, found {len(triangle_1_edge_candidates)}"
-                    )
-                triangle_1_edges.append(next(qq for qq in triangle_1_edge_candidates))
-
-                triangle_1_edge_candiates_2 = edges_by_start_vertex[
-                    triangle_1_edges[0][1]
-                ]
-                if len(triangle_1_edge_candiates_2) != 1:
-                    raise ValueError(
-                        f"Expected exactly one edge to connect to {triangle_1_edges[0][1]}, found {len(triangle_1_edge_candiates_2)}"
-                    )
-                triangle_1_edges.append(next(qq for qq in triangle_1_edge_candiates_2))
-
-                triangle_1_edges.append(
-                    (triangle_1_edges[-1][1], triangle_1_edges[0][0])
-                )
-                triangle_1_vertex_indices = [edge[0] for edge in triangle_1_edges]
-
-                currently_used_non_canonical_edges.update(
-                    triangle_edges(triangle_1_vertex_indices)
-                )
-
-                for used_edge in triangle_edges(triangle_1_vertex_indices):
-                    # reverse edges now become available
-                    possible_edges.add((used_edge[1], used_edge[0]))
-
-                for e in possible_edges:
-                    edges_by_start_vertex[e[0]].add(e)
-
-                _logger.info(f"Triangle 1 is {triangle_1_vertex_indices}")
-
-                currently_used_edges.update(
-                    [
-                        normalize_edge(*edge)
-                        for edge in triangle_edges(triangle_1_vertex_indices)
-                    ]
-                )
-
-                _logger.info(
-                    f"currently_used_non_canonical_edges before triangle 2: {currently_used_non_canonical_edges}"
-                )
-
-                _logger.info(f"Possible edges before triangle 2: {possible_edges}")
-                _logger.info(
-                    f"Edges by start vertex before triangle 2: {edges_by_start_vertex}"
-                )
-                triangle_2_edges = []
-                triangle_2_edge_candidates = [
-                    e
-                    for e in possible_edges
-                    if e not in currently_used_non_canonical_edges
-                ]
-
-                triangle_2_edge_candidates = [
-                    e
-                    for e in triangle_2_edge_candidates
-                    if e[0] not in tri and e[1] not in tri
-                ]
-
-                _logger.info(
-                    f"Found {len(triangle_2_edge_candidates)} candidates for triangle 2: {triangle_2_edge_candidates}"
-                )
-
-                triangle_2_edges.append(triangle_2_edge_candidates[0])
-
-                triangle_2_edge_candidates_2 = edges_by_start_vertex[
-                    triangle_2_edges[0][1]
-                ]
-
-                triangle_2_edge_candidates_2_possible = [
-                    e
-                    for e in triangle_2_edge_candidates_2
-                    if normalize_edge(*e) not in currently_used_edges
-                ]
-
-                _logger.info(
-                    f"Found {len(triangle_2_edge_candidates_2_possible)} really possible candidates starting at vertex {triangle_2_edges[0][1]}: {triangle_2_edge_candidates_2_possible}"
-                )
-                if len(triangle_2_edge_candidates_2_possible) != 1:
-                    raise ValueError(
-                        f"Expected exactly one edge to connect to {triangle_2_edges[0][1]}, found {len(triangle_2_edge_candidates_2_possible)}"
-                    )
-                triangle_2_edges.append(triangle_2_edge_candidates_2_possible[0])
-                triangle_2_edges.append(
-                    (triangle_2_edges[-1][1], triangle_2_edges[0][0])
-                )
-                triangle_2_vertex_indices = [edge[0] for edge in triangle_2_edges]
-
-                new_triangles = [
-                    triangle_0_vertex_indices,
-                    triangle_1_vertex_indices,
-                    triangle_2_vertex_indices,
-                ]
-
-                _logger.info(f"New triangles for {tri}: {new_triangles}")
-
-                all_new_edges_canonical = set()
-
-                for new_tri in new_triangles:
-                    new_edges = triangle_edges(new_tri)
-
-                    for edge in new_edges:
-                        if edge in seen_directed_edges:
-                            raise ValueError(
-                                f"Edge {edge} already seen, this should not happen."
-                            )
-                        normalized_edge = normalize_edge(*edge)
-
-                        all_new_edges_canonical.add(normalized_edge)
-
-                _logger.info(
-                    f"All new edges (canonical): {all_new_edges_canonical}, edge_to_cutpoint_index: {edge_to_cutpoint_index}"
-                )
-
-                if any(
-                    edge in edge_to_cutpoint_index for edge in all_new_edges_canonical
-                ):
-                    raise ValueError(
-                        "Generated triangles contain edges that were already cut, this should not happen."
-                    )
-
-                F_new.extend(new_triangles)
-
-            else:  # k == 3
-                # degenerate: plane goes through all three edges.  Copy original.
-                F_new.append(tri.tolist())
-                if any(edge in seen_directed_edges for edge in current_triangle_edges):
-                    raise ValueError(
-                        "Generated triangle has edges that were already seen, this should not happen."
-                    )
-                seen_directed_edges.update(current_triangle_edges)
-
+        for tri in F_orig:
+            edge_to_new_vertex = {}
+            for edge in triangle_edges(tri):
+                norm_edge = normalize_edge(*edge)
+                if norm_edge in edge_to_cutpoint_index:
+                    edge_to_new_vertex[norm_edge] = edge_to_cutpoint_index[norm_edge]
+
+            new_tris = split_triangle_topologically(tri, edge_to_new_vertex)
+            F_new.extend(new_tris)
+
+        # Step 4: Final validation and canonicalization
         F_new = self.canonicalize_faces(F_new)
-        check_directed_edge_duplicates(F_new)
 
         f_new_set = set([tuple(sorted(f)) for f in F_new])
         if len(f_new_set) != len(F_new):
             raise ValueError("Generated faces are not unique, there are duplicates.")
+
         return PartitionableSpheroidTriangleMesh(V_new, np.array(F_new), labels_new)
