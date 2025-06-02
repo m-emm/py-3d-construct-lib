@@ -263,15 +263,31 @@ def test_perforate_along_plane_dodecahedron():
     cut_mesh = mesh.perforate_along_plane(plane_origin, plane_normal)
 
     _logger.info(f"Cut mesh labels: {cut_mesh.vertex_labels}")
-
-    # We expect edges [0,1], [0,2] to be cut => 2 new vertices
-    expected_cut_edges = [("A", "B"), ("A", "C")]
-    for pair in expected_cut_edges:
-        label1 = f"{pair[0]}__{pair[1]}"
-        label2 = f"{pair[1]}__{pair[0]}"
-        candidates = cut_mesh.get_vertices_by_label(label1)
-        if not candidates:
-            candidates = cut_mesh.get_vertices_by_label(label2)
-        assert (
-            len(candidates) == 1
-        ), f"Expected one vertex for edge {pair}, got {candidates}"
+    assert cut_mesh.vertex_labels == [
+        "0",
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6",
+        "7",
+        "8",
+        "9",
+        "10",
+        "11",
+        "12",
+        "13",
+        "14",
+        "15",
+        "16",
+        "17",
+        "18",
+        "19",
+        "5__12",
+        "12__14",
+        "0__4",
+        "0__14",
+        "6__13",
+        "13__15",
+    ]
