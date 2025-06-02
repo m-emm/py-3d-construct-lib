@@ -1263,3 +1263,19 @@ class MeshPartition:
         print(f"Final region sizes: {region_sizes}")
 
         return MeshPartition(self.mesh, final_face_to_region)
+
+    def perforated(
+        self, plane_point: np.ndarray, plane_normal: np.ndarray
+    ) -> "MeshPartition":
+        new_mesh, face_index_mapping = self.mesh.perforate_along_plane(
+            plane_point, plane_normal
+        )
+
+        new_face_to_region_map = {}
+
+        for old_face, new_faces in face_index_mapping.items():
+            region = self.face_to_region_map[old_face]
+            for new_face in new_faces:
+                new_face_to_region_map[new_face] = region
+
+        return MeshPartition(new_mesh, new_face_to_region_map)

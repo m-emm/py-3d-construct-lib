@@ -230,7 +230,7 @@ def test_perforate_along_plane_tetrahedron():
     plane_normal = np.array([1.0, 0.0, 0.0])
 
     # Act
-    cut_mesh = mesh.perforate_along_plane(plane_origin, plane_normal)
+    cut_mesh, _ = mesh.perforate_along_plane(plane_origin, plane_normal)
 
     _logger.info(f"Cut mesh labels: {cut_mesh.vertex_labels}")
 
@@ -260,7 +260,7 @@ def test_perforate_along_plane_dodecahedron():
     plane_normal = np.array([1.0, 0.0, 0.0])
 
     # Act
-    cut_mesh = mesh.perforate_along_plane(plane_origin, plane_normal)
+    cut_mesh, _ = mesh.perforate_along_plane(plane_origin, plane_normal)
 
     _logger.info(f"Cut mesh labels: {cut_mesh.vertex_labels}")
     assert cut_mesh.vertex_labels == [

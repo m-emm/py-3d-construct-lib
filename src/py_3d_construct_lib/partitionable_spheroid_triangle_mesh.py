@@ -617,6 +617,8 @@ class PartitionableSpheroidTriangleMesh:
         F_orig = self.faces
         labels_orig = self.vertex_labels
 
+        face_index_mapping = {}
+
         # Step 1: Find all intersected edges and compute new vertices
         edge_to_cutpoint_index = {}
         new_vertices = []
@@ -653,7 +655,7 @@ class PartitionableSpheroidTriangleMesh:
 
         # Step 3: Subdivide triangles using split_triangle_topologically
         F_new = []
-        for tri in F_orig:
+        for orig_index, tri in enumerate(F_orig):
             edge_to_new_vertex = {}
             for edge in triangle_edges(tri):
                 norm_edge = normalize_edge(*edge)
@@ -661,7 +663,14 @@ class PartitionableSpheroidTriangleMesh:
                     edge_to_new_vertex[norm_edge] = edge_to_cutpoint_index[norm_edge]
 
             new_tris = split_triangle_topologically(tri, edge_to_new_vertex)
-            F_new.extend(new_tris)
+
+            new_face_indices = []
+            for t in new_tris:
+                new_index = len(F_new)
+                new_face_indices.append(new_index)
+                F_new.append(t)
+
+            face_index_mapping[orig_index] = new_face_indices
 
         # Step 4: Final validation and canonicalization
         F_new = self.canonicalize_faces(F_new)
@@ -670,4 +679,7 @@ class PartitionableSpheroidTriangleMesh:
         if len(f_new_set) != len(F_new):
             raise ValueError("Generated faces are not unique, there are duplicates.")
 
-        return PartitionableSpheroidTriangleMesh(V_new, np.array(F_new), labels_new)
+        return (
+            PartitionableSpheroidTriangleMesh(V_new, np.array(F_new), labels_new),
+            face_index_mapping,
+        )
