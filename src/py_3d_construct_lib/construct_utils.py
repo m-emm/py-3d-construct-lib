@@ -15,6 +15,10 @@ def compute_triangle_normal(v0, v1, v2):
     return np.cross(v1 - v0, v2 - v0)
 
 
+def triangle_area(v0, v1, v2):
+    return 0.5 * np.linalg.norm(np.cross(v1 - v0, v2 - v0))
+
+
 def normalize(v):
     n = np.linalg.norm(v)
     return v / n if n > 0 else v

@@ -2,7 +2,12 @@ import logging
 from collections import defaultdict
 
 import numpy as np
-from py_3d_construct_lib.construct_utils import create_dodecahedron_geometry
+from py_3d_construct_lib.construct_utils import (
+    compute_triangle_normal,
+    create_dodecahedron_geometry,
+    normalize,
+    triangle_area,
+)
 from py_3d_construct_lib.partitionable_spheroid_triangle_mesh import (
     PartitionableSpheroidTriangleMesh,
 )
@@ -356,3 +361,56 @@ def test_perforate_along_plane_dodecahedron():
         "6__13",
         "13__15",
     ]
+
+
+def test_perforate_along_plane_dodecahedron_check_normals():
+
+    def check_normals_point_outward(mesh: PartitionableSpheroidTriangleMesh, label=""):
+        total_area = 0.0
+        inward_count = 0
+        outward_count = 0
+        zero_normal_count = 0
+
+        for i, face in enumerate(mesh.faces):
+            v0, v1, v2 = [mesh.vertices[vi] for vi in face]
+            normal = compute_triangle_normal(v0, v1, v2)
+            center = (v0 + v1 + v2) / 3.0
+            center_dir = normalize(center)
+
+            dot = np.dot(normal, center_dir)
+            area = triangle_area(v0, v1, v2)
+            total_area += area
+
+            if dot < -1e-4:
+                inward_count += 1
+                _logger.warning(f"{label} Triangle {i} points inward (dot={dot:.4f})")
+            elif dot > 1e-4:
+                outward_count += 1
+            else:
+                zero_normal_count += 1
+                _logger.warning(
+                    f"{label} Triangle {i} has degenerate normal (dot={dot:.4f})"
+                )
+
+        _logger.info(
+            f"{label} Triangle normals: outward={outward_count}, inward={inward_count}, degenerate={zero_normal_count}, total_area={total_area:.6f}"
+        )
+        return total_area
+
+    points, _ = create_dodecahedron_geometry(1.0)
+
+    # Step 2: Create mesh object
+    mesh = PartitionableSpheroidTriangleMesh.from_point_cloud(points)
+
+    area_before = check_normals_point_outward(mesh, label="BEFORE")
+
+    # Cut it
+    plane_origin = np.array([0.0, 0.0, 0.0])
+    plane_normal = np.array([0.0, 1.0, 0.0])
+    cut_mesh, _ = mesh.perforate_along_plane(plane_origin, plane_normal)
+
+    area_after = check_normals_point_outward(cut_mesh, label="AFTER")
+
+    assert (
+        abs(area_before - area_after) < 1e-5
+    ), f"Area mismatch: before={area_before}, after={area_after}"

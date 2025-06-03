@@ -191,28 +191,28 @@ class PartitionableSpheroidTriangleMesh:
         self, shell_thickness, shrinkage=0, shrink_border=0
     ):
         """
-        Calculate the materialized shell maps for the mesh.
-        This will create a triangle prism for each triangle in the mesh, as a traditional face vertex map for each.
-
+        Calculate materialized shell triangle prisms per face,
+        returning both geometry and a mapping from original vertex indices
+        to inner and outer vertex IDs in the local face maps.
         """
 
         shell_maps = {}
+        vertex_index_map = {}
 
         sphere_center = np.mean(self.vertices, axis=0)
         spherical_vertexes = [
             cartesian_to_spherical_jackson(v - sphere_center) for v in self.vertices
         ]
 
-        for i, face in enumerate(self.faces):
-
-            # get the vertexes of the triangle
+        for face_index, face in enumerate(self.faces):
+            original_indices = list(face)
             triangle_spherical_vertexes = [
-                spherical_vertexes[face[0]],
-                spherical_vertexes[face[1]],
-                spherical_vertexes[face[2]],
+                spherical_vertexes[original_indices[0]],
+                spherical_vertexes[original_indices[1]],
+                spherical_vertexes[original_indices[2]],
             ]
 
-            # create the shell triangle geometry
+            # Geometry generation
             maps = self.create_shell_triangle_geometry(
                 triangle_spherical_vertexes,
                 sphere_center=sphere_center,
@@ -221,13 +221,18 @@ class PartitionableSpheroidTriangleMesh:
                 shrink_border=shrink_border,
             )
 
-            # add the maps to the shell_maps
-            shell_maps[i] = {
+            shell_maps[face_index] = {
                 "vertexes": maps["vertexes"],
                 "faces": maps["faces"],
             }
 
-        return shell_maps
+            # Vertex mapping: local vertex IDs in shell geometry (0–2: inner, 3–5: outer)
+            vertex_index_map[face_index] = {
+                "inner": {original_indices[i]: i for i in range(3)},
+                "outer": {original_indices[i]: i + 3 for i in range(3)},
+            }
+
+        return shell_maps, vertex_index_map
 
     def get_traditional_face_vertex_maps(self):
         """
@@ -291,6 +296,19 @@ class PartitionableSpheroidTriangleMesh:
             ray_dir /= np.linalg.norm(ray_dir)
             inner = intersect_ray_plane(sphere_center, ray_dir, plane_point, tri_normal)
             inner_verts.append(inner)
+
+        inner_verts_sperical = [
+            cartesian_to_spherical_jackson(v - sphere_center) for v in inner_verts
+        ]
+
+        for outer_vert_spherical, inner_vert_spherical in zip(
+            spherical_vertexes, inner_verts_sperical
+        ):
+            # inner radius must be less than outer radius
+            if inner_vert_spherical[0] >= outer_vert_spherical[0]:
+                raise ValueError(
+                    f"Inner radius {inner_vert_spherical[0]} must be less than outer radius {outer_vert_spherical[0]}"
+                )
 
         return inner_verts
 
