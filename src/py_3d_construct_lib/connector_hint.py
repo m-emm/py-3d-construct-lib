@@ -14,6 +14,8 @@ class ConnectorHint:
     triangle_b_normal: np.ndarray
     edge_vector: np.ndarray
     edge_centroid: np.ndarray
+    start_vertex: np.ndarray
+    end_vertex: np.ndarray
     # Optional fields to keep track of merged provenance
     original_edges: list[Tuple[int, int]] = field(default_factory=list)
     face_pair_ids: list[Tuple[int, int]] = field(default_factory=list)

@@ -1,3 +1,4 @@
+import logging
 from collections import Counter, defaultdict, deque
 from dataclasses import replace
 from itertools import combinations
@@ -16,6 +17,8 @@ from py_3d_construct_lib.spherical_tools import (
     rotation_matrix_from_vectors,
 )
 from py_3d_construct_lib.transformed_region_view import TransformedRegionView
+
+_logger = logging.getLogger(__name__)
 
 
 def are_normals_similar(n1: np.ndarray, n2: np.ndarray, tol: float = 1e-3) -> bool:
@@ -50,14 +53,12 @@ def are_collinear(
 def merge_collinear_connectors(
     hints: List[ConnectorHint], angle_tol: float = 1e-3
 ) -> List[ConnectorHint]:
-    from collections import defaultdict
 
-    import numpy as np
+    tol = 1e-6
+    original_count = len(hints)
 
     def get_endpoints(h: ConnectorHint):
-        a = h.edge_centroid - 0.5 * h.edge_vector
-        b = h.edge_centroid + 0.5 * h.edge_vector
-        return a, b
+        return h.start_vertex, h.end_vertex
 
     grouped = defaultdict(list)
     for h in hints:
@@ -67,7 +68,6 @@ def merge_collinear_connectors(
 
     for (region_a, region_b), group in grouped.items():
         remaining = list(enumerate(group))
-        chains = []
 
         while remaining:
             idx, base = remaining.pop(0)
@@ -75,34 +75,43 @@ def merge_collinear_connectors(
             chain = [(idx, base_start, base_end)]
 
             progress = True
+
             while progress:
                 progress = False
-                for i, (j, hint) in enumerate(remaining):
+                new_remaining = []
+                for j, hint in remaining:
                     a, b = get_endpoints(hint)
+                    end_chain_vertex = chain[-1][2]
+                    start_chain_vertex = chain[0][1]
 
-                    if np.allclose(chain[-1][2], a):  # append forward
+                    if np.allclose(end_chain_vertex, a, atol=tol):
+                        print(f"Found forward match: {j} to {chain[-1][0]}")
                         if are_normals_similar(
                             base.triangle_a_normal, hint.triangle_a_normal, angle_tol
                         ) and are_normals_similar(
                             base.triangle_b_normal, hint.triangle_b_normal, angle_tol
                         ):
+
+                            print(f"Appending forward: {j} to {chain[-1][0]}")
                             chain.append((j, a, b))
-                            remaining.pop(i)
                             progress = True
-                            break
-                    elif np.allclose(chain[0][1], b):  # prepend forward
+                    elif np.allclose(start_chain_vertex, b, atol=tol):
+                        print(f"Found backward match: {j} to {chain[0][0]}")
                         if are_normals_similar(
                             base.triangle_a_normal, hint.triangle_a_normal, angle_tol
                         ) and are_normals_similar(
                             base.triangle_b_normal, hint.triangle_b_normal, angle_tol
                         ):
+
+                            print(f"Prepending forward: {j} to {chain[0][0]}")
                             chain.insert(0, (j, a, b))
-                            remaining.pop(i)
                             progress = True
-                            break
-                    # No flipping allowed
+                    else:
+                        new_remaining.append((j, hint))  # keep only unmerged
+                remaining = new_remaining
 
             if len(chain) == 1:
+                print(f"Found chain of length 1: {chain[0][0]}")
                 merged_hints.append(group[chain[0][0]])
                 continue
 
@@ -153,114 +162,8 @@ def merge_collinear_connectors(
                 ],
             )
             merged_hints.append(new_hint)
+    print(f"Merged into {len(merged_hints)} connector hints (from {original_count})")
 
-    return merged_hints
-
-
-def merge_collinear_connectors_v1(
-    hints: List[ConnectorHint], angle_tol: float = 1e-3
-) -> List[ConnectorHint]:
-    """
-    Merges collinear and coplanar connector hints for the same region pair.
-    """
-    grouped = defaultdict(list)
-    for hint in hints:
-        key = (hint.region_a, hint.region_b)
-        grouped[key].append(hint)
-
-    merged_hints = []
-
-    for (region_a, region_b), group in grouped.items():
-        used_indices = set()
-
-        for i, base in enumerate(group):
-            if i in used_indices:
-                continue
-
-            chain = [base]
-            used_indices.add(i)
-
-            base_a_normal = base.triangle_a_normal
-            base_b_normal = base.triangle_b_normal
-            base_start = base.edge_centroid - 0.5 * base.edge_vector
-            base_end = base.edge_centroid + 0.5 * base.edge_vector
-
-            for j, other in enumerate(group):
-                if j == i or j in used_indices:
-                    continue
-
-                if not (
-                    are_normals_similar(
-                        base_a_normal, other.triangle_a_normal, angle_tol
-                    )
-                    and are_normals_similar(
-                        base_b_normal, other.triangle_b_normal, angle_tol
-                    )
-                ):
-                    continue
-
-                other_start = other.edge_centroid - 0.5 * other.edge_vector
-                other_end = other.edge_centroid + 0.5 * other.edge_vector
-
-                if are_collinear(
-                    base_start, base_end, other_start, other_end, angle_tol
-                ):
-                    chain.append(other)
-                    used_indices.add(j)
-
-            # Merge chain
-            endpoints = []
-            all_faces = []
-            all_edges = []
-
-            print(
-                f"Merging {len(chain)} hints for regions {region_a} and {region_b}, chain: {chain}"
-            )
-            for h in chain:
-                a = h.edge_centroid - 0.5 * h.edge_vector
-                b = h.edge_centroid + 0.5 * h.edge_vector
-                endpoints.extend([a, b])
-                all_faces.extend(getattr(h, "face_pair_ids", []))
-                all_edges.extend(getattr(h, "original_edges", []))
-
-            p_start = chain[0].edge_centroid - 0.5 * chain[0].edge_vector
-            p_end = chain[-1].edge_centroid + 0.5 * chain[-1].edge_vector
-
-            if np.allclose(p_start, p_end):
-                raise ValueError(
-                    f"Degenerate connector edge: start and end are too close.\n"
-                    f"  region_a = {region_a}, region_b = {region_b}\n"
-                    f"  base_start = {base_start}, base_end = {base_end}\n"
-                    f"  merged p_start = {p_start}\n"
-                    f"  merged p_end = {p_end}\n"
-                    f"  endpoints = {endpoints}\n"
-                    f"  num hints in chain = {len(chain)}\n"
-                    f"  face_pair_ids = {[getattr(h, 'face_pair_ids', []) for h in chain]}"
-                )
-            new_vec = normalize(p_end - p_start)
-            new_mid = (p_start + p_end) / 2
-
-            def construct_triangle(p1, p2, normal, height=0.1):
-                base_vec = p2 - p1
-                perp = np.cross(normal, base_vec)
-                perp = normalize(perp) * height
-                return (p1, p2, (p1 + p2) / 2 + perp)
-
-            tri_a = construct_triangle(p_start, p_end, base_a_normal)
-            tri_b = construct_triangle(p_end, p_start, base_b_normal)  # reverse
-
-            new_hint = replace(
-                chain[0],
-                edge_vector=new_vec,
-                edge_centroid=new_mid,
-                triangle_a_vertices=tri_a,
-                triangle_b_vertices=tri_b,
-                triangle_a_normal=normalize(compute_triangle_normal(*tri_a)),
-                triangle_b_normal=normalize(compute_triangle_normal(*tri_b)),
-                original_edges=all_edges,
-                face_pair_ids=all_faces,
-            )
-            merged_hints.append(new_hint)
     return merged_hints
 
 
@@ -538,13 +441,23 @@ class MeshPartition:
             if r_a > r_b:
                 (f_a, r_a), (f_b, r_b) = (f_b, r_b), (f_a, r_a)
 
-            shared_indices = set(mesh.faces[f_a]) & set(mesh.faces[f_b])
-            if len(shared_indices) != 2:
-                raise ValueError(
-                    f"Shared face pair does not share exactly 2 vertices: {f_a}, {f_b}"
-                )
-            vi1, vi2 = list(shared_indices)
+            face_a = mesh.faces[f_a]
+            shared_indices = set(face_a) & set(mesh.faces[f_b])
 
+            # preserve winding order from face_a
+            ordered_shared = []
+            for i in range(3):
+                a, b = face_a[i], face_a[(i + 1) % 3]
+                if a in shared_indices and b in shared_indices:
+                    ordered_shared = [a, b]
+                    break
+
+            if len(ordered_shared) != 2:
+                raise ValueError(
+                    f"Failed to find shared edge with correct order in face {f_a}"
+                )
+
+            vi1, vi2 = ordered_shared
             # Get inner vertex positions from shell map
             shell_map_a = shell_maps[f_a]
             shell_map_b = shell_maps[f_b]
@@ -581,6 +494,8 @@ class MeshPartition:
                 triangle_b_normal=n_b,
                 edge_vector=edge_vec,
                 edge_centroid=edge_mid,
+                start_vertex=p1,
+                end_vertex=p2,
             )
             connector_hints.append(hint)
 
