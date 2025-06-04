@@ -4,7 +4,12 @@ from typing import Optional
 
 import numpy as np
 from py_3d_construct_lib.connector_utils import transform_connector_hint
-from py_3d_construct_lib.construct_utils import fibonacci_sphere, triangle_area
+from py_3d_construct_lib.construct_utils import (
+    compute_lay_flat_transform,
+    fibonacci_sphere,
+    normalize,
+    triangle_area,
+)
 from py_3d_construct_lib.spherical_tools import rotation_matrix_from_vectors
 
 
@@ -98,7 +103,7 @@ class TransformedRegionView:
         V = np.array([maps["vertexes"][i] for i in sorted(maps["vertexes"])])
         F = np.array([maps["faces"][i] for i in sorted(maps["faces"])])
         E = np.array(
-            [maps["boundary_edges"][i] for i in sorted(maps["boundary_edges"])]
+            sorted([maps["boundary_edges"][i] for i in sorted(maps["boundary_edges"])])
         )
 
         vertex_indices_in_edges = set()
@@ -526,10 +531,16 @@ class TransformedRegionView:
 
     def printability_score(self, angle_threshold_rad=np.radians(45)):
 
-        def angle_from_vertical(normal):
-            vertical = np.array([0, 0, 1])
-            dot = np.dot(normal, vertical)
-            return np.arccos(np.clip(np.abs(dot), -1.0, 1.0))
+        def elevation_angle(normal):
+            # Angle between normal and the XY plane
+            xy_norm = np.linalg.norm(normal[:2])
+            return np.arctan2(normal[2], xy_norm)
+
+        def smooth_score(elev_angle, threshold_rad):
+            angle = abs(elev_angle)
+            if angle >= threshold_rad:
+                return 0.0
+            return 1.0 - (angle / threshold_rad) ** 2
 
         V, F, E = self.get_transformed_vertices_faces_boundary_edges()
 
@@ -569,13 +580,16 @@ class TransformedRegionView:
             v0, v1, v2 = V[face]
             area = triangle_area(v0, v1, v2)
             normal = np.cross(v1 - v0, v2 - v0)
-            normal = normal / np.linalg.norm(normal)
-            angle = angle_from_vertical(normal)
-            if angle <= angle_threshold_rad:
+            normal = normalize(normal)
+
+            # Special case: exactly flat triangle at z=0 → always printable
+            if np.all(np.abs(V[face][:, 2]) < 1e-6):
                 printable_area += area
-            elif all(np.abs(V[face][:, 2]) < 1e-6):
-                # If the face is flat on the XY plane, consider it printable
-                printable_area += area
+            else:
+                elev = elevation_angle(normal)
+                score = smooth_score(elev, angle_threshold_rad)
+                printable_area += area * score
+
             total_area += area
 
         return printable_area / total_area if total_area > 0 else 0.0
@@ -606,6 +620,117 @@ class TransformedRegionView:
         else:
             print(f"Best printability score: {best_printability_score}")
             return best_view
+
+    def lay_flat_on_boundary_edges_for_printability(
+        self, angle_threshold_rad=np.radians(45)
+    ):
+        """
+        Try to lay flat all non-collinear pairs of boundary edges by rotating the region
+        so that the first edge lies along X-axis on the Z=0 plane, and the first point
+        of the second edge lies also on Z=0.
+
+        Returns the transformed view with the highest printability score.
+        """
+        from itertools import combinations
+
+        V, F, edge_list = self.get_transformed_vertices_faces_boundary_edges()
+
+        edge_walk = []
+
+        remaining = [(a, b) for a, b in edge_list]
+
+        while len(remaining) > 0:
+            progress = False
+            for current in remaining:
+                if not edge_walk:
+                    edge_walk.append(current)
+                    remaining.remove(current)
+                    progress = True
+                    break
+
+                first_vertex = edge_walk[0][0]
+                last_vertex = edge_walk[-1][1]
+
+                if current[0] == last_vertex:
+                    edge_walk.append((current[0], current[1]))
+                    remaining.remove(current)
+                    progress = True
+                    break
+                elif current[1] == first_vertex:
+                    edge_walk.insert(0, (current[0], current[1]))
+                    remaining.remove(current)
+                    progress = True
+                    break
+
+            if not progress:
+                print("No progress in edge walk, remaining edges:", remaining)
+                break
+
+        edge_walk_is_closed = edge_walk[0][0] == edge_walk[-1][1]
+        print(f"Edge walk: {edge_walk}, is closed: {edge_walk_is_closed}")
+
+        best_score = 0.0
+        best_view = None
+        found_candidate = False
+
+        for (i1, j1), (i2, j2) in combinations(edge_walk, 2):
+            p1, p2 = V[i1], V[j1]
+            q1, q2 = V[i2], V[j2]
+
+            # Compute triangle areas to check if we can form meaningful triangle
+            area1 = triangle_area(p1, p2, q1)
+            area2 = triangle_area(p1, p2, q2)
+
+            if area1 < 1e-8 and area2 < 1e-8:
+                print(
+                    f"Skipping degenerate triangle for edges ({i1},{j1}) + ({i2},{j2})"
+                )
+                continue
+
+            found_candidate = True
+
+            # Choose the larger triangle for stability
+            if area1 >= area2:
+                base_triangle = (p1, p2, q1)
+                check_vertices = [i2, j2]
+            else:
+                base_triangle = (p1, p2, q2)
+                check_vertices = [i2, j2]
+
+            A = compute_lay_flat_transform(*base_triangle)
+
+            # Apply transform to the check vertices
+            v_check_1 = (A @ np.hstack([V[check_vertices[0]], 1.0]))[:3]
+            v_check_2 = (A @ np.hstack([V[check_vertices[1]], 1.0]))[:3]
+
+            if not np.isclose(v_check_1[2], 0.0, atol=1e-5) or not np.isclose(
+                v_check_2[2], 0.0, atol=1e-5
+            ):
+                print(
+                    f"Skipping edge pair ({i1},{j1}) and ({i2},{j2}) due to z mismatch: "
+                    f"{v_check_1[2]:.5f}, {v_check_2[2]:.5f}"
+                )
+                continue
+
+            new_view = self.apply_transform(A)
+            new_V, _, _ = new_view.get_transformed_vertices_faces_boundary_edges()
+
+            if np.any(new_V[:, 2] < -1e-6):
+                print(
+                    f"Skipping edge pair ({i1},{j1}) and ({i2},{j2}) due to underwater vertices"
+                )
+                continue
+
+            score = new_view.printability_score(angle_threshold_rad)
+            if score > best_score:
+                print(f"New best printability score (edge-based): {score}")
+                best_score = score
+                best_view = new_view
+
+        if not found_candidate:
+            print("No suitable edge pairs found for laying flat.")
+
+        return best_view if best_view is not None else self
 
 
 def rotation_matrix_about_axis(axis, angle):

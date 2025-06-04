@@ -1,6 +1,7 @@
 import math
 
 import numpy as np
+from py_3d_construct_lib.spherical_tools import rotation_matrix_from_vectors
 
 
 def normalize_edge(a, b):
@@ -248,3 +249,48 @@ def split_triangle_topologically(tri, edge_to_new_vertex, perform_area_check=Tru
             raise ValueError(f"Area mismatch: original {original_area}, new {new_area}")
 
     return final_tris
+
+
+def compute_lay_flat_transform(
+    a: np.ndarray, b: np.ndarray, c: np.ndarray
+) -> np.ndarray:
+    """
+    Compute a 4×4 transformation matrix that lays the triangle (a, b, c) flat on the XY plane.
+    The triangle will be rotated such that its normal aligns with +Z and translated so it lies at Z=0.
+
+    Parameters:
+        a, b, c: np.ndarray
+            The 3D coordinates of the triangle vertices.
+
+    Returns:
+        A 4×4 np.ndarray representing the affine transform.
+    """
+    centroid = (a + b + c) / 3.0
+    normal_vec = np.cross(b - a, c - a)
+    normal_vec = normal_vec / np.linalg.norm(normal_vec)
+    target_normal = np.array([0.0, 0.0, 1.0])
+
+    # Rotation matrix to align the normal to +Z
+    R3 = rotation_matrix_from_vectors(normal_vec, target_normal)
+
+    # Build the full transform: T_z * T(+centroid) * R * T(-centroid)
+    T1 = np.eye(4)
+    T1[:3, 3] = -centroid
+
+    R4 = np.eye(4)
+    R4[:3, :3] = R3
+
+    T2 = np.eye(4)
+    T2[:3, 3] = centroid
+
+    M = T2 @ R4 @ T1
+
+    # Apply to triangle and compute average z after transform
+    pts_m = [(M @ np.hstack([v, 1.0]))[:3] for v in (a, b, c)]
+    z_face = sum(p[2] for p in pts_m) / 3.0
+
+    # Final shift to bring to Z=0
+    T3 = np.eye(4)
+    T3[2, 3] = -z_face
+
+    return T3 @ M

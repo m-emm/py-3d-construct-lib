@@ -1,7 +1,7 @@
 import numpy as np
 from py_3d_construct_lib.connector_hint import ConnectorHint
 from py_3d_construct_lib.connector_utils import compute_connector_hints_from_shell_maps
-from py_3d_construct_lib.construct_utils import normalize
+from py_3d_construct_lib.construct_utils import create_dodecahedron_geometry, normalize
 from py_3d_construct_lib.face_point_cloud import sphere_radius
 from py_3d_construct_lib.geometries import (
     create_cube_geometry,
@@ -156,3 +156,79 @@ def test_compute_connector_hints_merge_tetrahedron():
         )
 
         assert len(connector_hints) == len(connector_hints_merged)
+
+
+def test_lay_flat_optimal():
+    # Step 1: Generate geometry
+    points, _ = create_tetrahedron_geometry(sphere_radius)
+
+    # Step 2: Create mesh object
+    mesh = PartitionableSpheroidTriangleMesh.from_point_cloud(points)
+
+    partition = mesh.get_trivial_partition()
+
+    partition = partition.perforate_and_split_region_by_plane(
+        0, plane_point=np.array([0, 0, 0]), plane_normal=np.array([0, 1, 1])
+    )
+
+    print(f"Partitioned into {partition.get_regions()}")
+    for region_id in partition.get_regions():
+        print(f"Region {region_id} Faces: {partition.get_faces_of_region(region_id)}")
+
+    print(f"Partitioned into {partition.get_regions()}")
+    for region_id in partition.get_regions():
+        print(f"Region {region_id} Faces: {partition.get_faces_of_region(region_id)}")
+
+    region_views = []
+
+    for region_id in partition.get_regions():
+        view = partition.region_view(region_id)
+        region_views.append(view)
+
+    # Step 5: Fuse solids per region
+    tol = 1e-5  # tolerance for printability score
+    for region_view in region_views:
+        region_view = region_view.lay_flat_optimally_printable()
+
+        assert region_view.printability_score() >= 0.5 - tol
+
+
+def test_lay_flat_on_edge():
+    print("Generating base icosahedron...")
+
+    # Step 1: Generate icosahedron geometry
+    points, _ = create_dodecahedron_geometry(sphere_radius)
+
+    # Step 2: Create mesh object
+    mesh = PartitionableSpheroidTriangleMesh.from_point_cloud(points)
+
+    partition = mesh.get_trivial_partition()
+
+    partition = partition.perforate_and_split_region_by_plane(
+        region_id=0,
+        plane_point=np.array([0, 0, 0]),
+        plane_normal=np.array([0, 0, 1]),
+    )
+
+    partition = partition.perforate_and_split_region_by_plane(
+        region_id=1,
+        plane_point=np.array([0, 0, 0]),
+        plane_normal=np.array([0, 1, 0]),
+    )
+
+    print(f"Partitioned into {partition.get_regions()}")
+    for region_id in partition.get_regions():
+        print(f"Region {region_id} Faces: {partition.get_faces_of_region(region_id)}")
+    region_views = []
+
+    for region_id in partition.get_regions():
+        view = partition.region_view(region_id)
+        region_views.append(view)
+
+    region_view = region_views[1]
+
+    region_view = region_view.lay_flat_on_boundary_edges_for_printability()
+
+    assert (
+        region_view.printability_score() > 0.1
+    ), "Printability score should be at least 0.1"

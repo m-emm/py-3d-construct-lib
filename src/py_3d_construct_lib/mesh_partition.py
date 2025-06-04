@@ -256,7 +256,27 @@ class MeshPartition:
             if region_id in key:
                 edge_set.update(edges)
 
-        return edge_set
+        faces_in_region = self.get_faces_of_region(region_id)
+        edges_in_region = set()
+
+        for face_index in faces_in_region:
+            face = self.mesh.faces[face_index]
+            for i in range(3):
+                edge = (face[i], face[(i + 1) % 3])
+                edges_in_region.add(edge)
+
+        decanicalized_edge_set = set()
+        for edge in edge_set:
+            if edge in edges_in_region:
+                decanicalized_edge_set.add(edge)
+            elif (edge[1], edge[0]) in edges_in_region:
+                decanicalized_edge_set.add((edge[1], edge[0]))
+            else:
+                raise ValueError(
+                    f"Edge {edge} is not part of the region {region_id} faces."
+                )
+
+        return decanicalized_edge_set
 
     def region_adjacency_graph(self):
         adj = defaultdict(set)
