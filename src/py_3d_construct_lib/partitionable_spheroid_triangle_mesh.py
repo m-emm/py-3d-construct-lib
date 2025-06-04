@@ -797,7 +797,7 @@ class PartitionableSpheroidTriangleMesh:
         cylinder: CylinderSpec,
         epsilon=1e-8,
         triangle_indices=None,
-        min_relative_area=1e-6,
+        min_relative_area=1e-2,
         min_angle_deg=5.0,
     ) -> PerforationResult:
         V_orig = mesh.vertices
@@ -815,6 +815,15 @@ class PartitionableSpheroidTriangleMesh:
         next_index = len(V_orig)
         seen_edges = set()
 
+        characteristic_length = np.max(np.linalg.norm(V_orig, axis=1))
+
+        # Precompute edge-to-face map to evaluate triangle quality for edge splits
+        edge_to_tri_indices = defaultdict(set)
+        for tri_idx, tri in enumerate(F_orig):
+            for edge in triangle_edges(tri):
+                norm_edge = normalize_edge(*edge)
+                edge_to_tri_indices[norm_edge].add(tri_idx)
+
         for tri_idx in triangle_indices:
             tri = F_orig[tri_idx]
             for a, b in triangle_edges(tri):
@@ -825,38 +834,69 @@ class PartitionableSpheroidTriangleMesh:
 
                 p1, p2 = V_orig[edge[0]], V_orig[edge[1]]
                 result = intersect_edge_with_cylinder(p1, p2, cylinder)
-                if result is not None:
-                    t1, t2 = result
-                    for t in (t1, t2):
-                        if 0 < t < 1:
-                            ipt = (1 - t) * p1 + t * p2
-                            closest = np.argmin(np.linalg.norm(V_orig - ipt, axis=1))
-                            if np.linalg.norm(V_orig[closest] - ipt) < epsilon:
-                                continue
-                            edge_to_cutpoint_index[edge] = next_index
-                            new_vertices.append(ipt)
-                            new_labels.append(
-                                f"{labels_orig[edge[0]]}__{labels_orig[edge[1]]}"
-                            )
-                            next_index += 1
-                            print(
-                                f"Inserted cutpoint {ipt} on edge {edge} of triangle {tri_idx}"
-                            )
-                            break  # only one insertion per edge
+                if result is None:
+                    continue
 
-        # Expand triangle set
-        if edge_to_cutpoint_index:
-            edge_to_tri_indices = defaultdict(set)
-            for tri_idx, tri in enumerate(F_orig):
-                for edge in triangle_edges(tri):
-                    norm_edge = normalize_edge(*edge)
-                    edge_to_tri_indices[norm_edge].add(tri_idx)
+                t1, t2 = result
+                for t in (t1, t2):
+                    if not (0 < t < 1):
+                        continue
 
-            affected_tri_indices = set()
-            for cut_edge in edge_to_cutpoint_index:
-                affected_tri_indices.update(edge_to_tri_indices[cut_edge])
+                    ipt = (1 - t) * p1 + t * p2
+                    if (
+                        np.linalg.norm(
+                            V_orig[np.argmin(np.linalg.norm(V_orig - ipt, axis=1))]
+                            - ipt
+                        )
+                        < epsilon
+                    ):
+                        continue  # Skip if too close to existing vertex
 
-            triangle_indices.update(affected_tri_indices)
+                    # Check triangle quality for each adjacent triangle
+                    acceptable = True
+                    for face_idx in edge_to_tri_indices[edge]:
+                        face = F_orig[face_idx]
+                        if edge[0] in face and edge[1] in face:
+                            third = [v for v in face if v not in edge][0]
+                            p0, p1_, p2 = V_orig[edge[0]], ipt, V_orig[third]
+                            p1b, p2b = ipt, V_orig[edge[1]]
+
+                            area1 = triangle_area(p0, p1_, p2)
+                            area2 = triangle_area(p1b, p2b, p2)
+
+                            if (
+                                area1 < min_relative_area * characteristic_length**2
+                                or area2 < min_relative_area * characteristic_length**2
+                            ):
+                                acceptable = False
+                                break
+
+                            angle1 = triangle_min_angle(p0, p1_, p2)
+                            angle2 = triangle_min_angle(p1b, p2b, p2)
+
+                            if angle1 < min_angle_deg or angle2 < min_angle_deg:
+                                acceptable = False
+                                break
+
+                    if not acceptable:
+                        continue
+
+                    # Accept the insertion
+                    edge_to_cutpoint_index[edge] = next_index
+                    new_vertices.append(ipt)
+                    new_labels.append(f"{labels_orig[edge[0]]}__{labels_orig[edge[1]]}")
+                    next_index += 1
+                    print(
+                        f"Inserted cutpoint {ipt} on edge {edge} of triangle {tri_idx}"
+                    )
+                    break  # only one insertion per edge
+
+        # Update affected triangles
+        affected_tri_indices = set()
+        for cut_edge in edge_to_cutpoint_index:
+            affected_tri_indices.update(edge_to_tri_indices[cut_edge])
+
+        triangle_indices.update(affected_tri_indices)
 
         return PerforationResult(
             edge_to_new_vertex_index=edge_to_cutpoint_index,
