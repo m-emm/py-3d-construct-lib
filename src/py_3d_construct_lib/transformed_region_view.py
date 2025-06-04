@@ -4,7 +4,7 @@ from typing import Optional
 
 import numpy as np
 from py_3d_construct_lib.connector_utils import transform_connector_hint
-from py_3d_construct_lib.construct_utils import fibonacci_sphere
+from py_3d_construct_lib.construct_utils import fibonacci_sphere, triangle_area
 from py_3d_construct_lib.spherical_tools import rotation_matrix_from_vectors
 
 
@@ -288,6 +288,12 @@ class TransformedRegionView:
 
         return new_view
 
+    def num_faces(self) -> int:
+        """
+        Return the number of faces in the region.
+        """
+        return self.partition.get_num_faces_in_region(self.region_id)
+
     def lay_flat_on_face(self, face_index_in_region: int) -> "TransformedRegionView":
         """
         Lay the region flat on a specific face by aligning it with the XY plane.
@@ -386,9 +392,6 @@ class TransformedRegionView:
         V, F, _ = self.get_transformed_vertices_faces_boundary_edges()
         z_axis = np.array([0, 0, 1])
         threshold_rad = np.radians(overhang_threshold_deg)
-
-        def triangle_area(a, b, c):
-            return 0.5 * np.linalg.norm(np.cross(b - a, c - a))
 
         total_area = 0.0
         unprintable_area = 0.0
@@ -520,6 +523,89 @@ class TransformedRegionView:
                 best_view = candidate
 
         return best_view, best_score
+
+    def printability_score(self, angle_threshold_rad=np.radians(45)):
+
+        def angle_from_vertical(normal):
+            vertical = np.array([0, 0, 1])
+            dot = np.dot(normal, vertical)
+            return np.arccos(np.clip(np.abs(dot), -1.0, 1.0))
+
+        V, F, E = self.get_transformed_vertices_faces_boundary_edges()
+
+        z_coords = V[:, 2]
+        all_above_or_on_plane = np.all(z_coords >= -1e-6)
+        if not all_above_or_on_plane:
+            return 0.0
+
+        # Condition 1: triangle(s) lying flat on z=0
+        has_flat_triangle = any(np.all(np.abs(V[face][:, 2]) < 1e-6) for face in F)
+
+        # Condition 2: multiple non-collinear edges at z=0
+        flat_edges = [
+            (V[a], V[b]) for a, b in E if abs(V[a][2]) < 1e-6 and abs(V[b][2]) < 1e-6
+        ]
+        non_collinear_pairs = 0
+        for i in range(len(flat_edges)):
+            for j in range(i + 1, len(flat_edges)):
+                va1, vb1 = flat_edges[i]
+                va2, vb2 = flat_edges[j]
+                dir1 = vb1 - va1
+                dir2 = vb2 - va2
+                dir1 /= np.linalg.norm(dir1)
+                dir2 /= np.linalg.norm(dir2)
+                if np.linalg.norm(np.cross(dir1, dir2)) > 0.1:  # not collinear
+                    non_collinear_pairs += 1
+                    break
+            if non_collinear_pairs > 0:
+                break
+
+        if not has_flat_triangle and non_collinear_pairs == 0:
+            return 0.0
+
+        total_area = 0.0
+        printable_area = 0.0
+        for face in F:
+            v0, v1, v2 = V[face]
+            area = triangle_area(v0, v1, v2)
+            normal = np.cross(v1 - v0, v2 - v0)
+            normal = normal / np.linalg.norm(normal)
+            angle = angle_from_vertical(normal)
+            if angle <= angle_threshold_rad:
+                printable_area += area
+            elif all(np.abs(V[face][:, 2]) < 1e-6):
+                # If the face is flat on the XY plane, consider it printable
+                printable_area += area
+            total_area += area
+
+        return printable_area / total_area if total_area > 0 else 0.0
+
+    def lay_flat_optimally_printable(self, angle_threshold_rad=np.radians(45)):
+        """
+        Lay the region flat in the most printable orientation.
+
+        This method finds the best orientation that minimizes unprintable area fraction
+        based on the specified angle threshold.
+        """
+
+        best_printability_score = 0
+        best_view = None
+        for i in range(self.num_faces()):
+
+            optimized_view = self.lay_flat_on_face(i)
+
+            score = optimized_view.printability_score(angle_threshold_rad)
+
+            if score > best_printability_score:
+                print(f"New best printability score: {score} for face {i}")
+                best_printability_score = score
+                best_view = optimized_view
+
+        if best_view is None:
+            return self
+        else:
+            print(f"Best printability score: {best_printability_score}")
+            return best_view
 
 
 def rotation_matrix_about_axis(axis, angle):

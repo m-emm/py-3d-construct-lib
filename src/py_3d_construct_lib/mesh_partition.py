@@ -308,6 +308,12 @@ class MeshPartition:
             key=lambda h: (h.region_a, h.region_b, tuple(h.edge_centroid)),
         )
 
+    def get_num_faces_in_region(self, region_id):
+        """
+        Returns the number of faces in the specified region.
+        """
+        return len(self.get_faces_of_region(region_id))
+
     def get_submesh_maps(self, region_id):
 
         faces_of_region = self.get_faces_of_region(region_id)

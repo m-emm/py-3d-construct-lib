@@ -71,6 +71,9 @@ def test_compute_connector_hints_on_transformed_region_view():
 
     region_view = partition.region_view(0)
 
+    num_faces = region_view.num_faces()
+    print(f"Region {region_view.region_id} has {num_faces} faces")
+
     # Compute connector hints
     hints = region_view.compute_transformed_connector_hints(shell_thickness=0.02)
 
