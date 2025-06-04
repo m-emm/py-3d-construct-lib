@@ -1357,13 +1357,22 @@ class MeshPartition:
         height: float,
         radius: float,
         epsilon: float = 1e-9,
+        min_relative_area=1e-2,
+        min_angle_deg=5.0,
     ) -> "MeshPartition":
         region_faces = [
             idx for idx, r in self.face_to_region_map.items() if r == region_id
         ]
 
         new_mesh, face_index_map = self.mesh.perforate_with_cylinder(
-            bottom, axis, height, radius, epsilon=epsilon, triangle_indices=region_faces
+            bottom,
+            axis,
+            height,
+            radius,
+            epsilon=epsilon,
+            triangle_indices=region_faces,
+            min_relative_area=min_relative_area,
+            min_angle_deg=min_angle_deg,
         )
 
         new_face_to_region = {}
@@ -1377,16 +1386,98 @@ class MeshPartition:
                     new_face_to_region[new_face] = old_region
                 continue
 
-            # classify by centroid
+            # classify by all-vertices-inside
             for new_face in new_face_indices:
                 face = new_mesh.faces[new_face]
-                centroid = new_mesh.vertices[face].mean(axis=0)
+                vertices = new_mesh.vertices[face]
 
-                if point_inside_cylinder(
-                    centroid, bottom, axis, height, radius, epsilon
+                if all(
+                    point_inside_cylinder(v, bottom, axis, height, radius, epsilon)
+                    for v in vertices
                 ):
-                    new_face_to_region[new_face] = region_id
-                else:
                     new_face_to_region[new_face] = new_region_id
-
+                else:
+                    new_face_to_region[new_face] = region_id
         return MeshPartition(new_mesh, new_face_to_region)
+
+    def drill_hole(
+        self,
+        region_id: int,
+        center_vertex_label: str,
+        radius: float,
+        height: float = 1000.0,
+        epsilon: float = 1e-8,
+        min_relative_area=1e-2,
+        min_angle_deg=5.0,
+    ) -> "MeshPartition":
+        """
+        Drill a cylindrical hole in the specified region by removing faces within a certain radius
+        from the center vertex, along the averaged local normal.
+
+        Parameters
+        ----------
+        region_id : int
+            The ID of the region to drill a hole in.
+        center_vertex_label : str
+            The label of the vertex at the center of the hole.
+        radius : float
+            The radius of the hole (cylinder radius).
+        height : float
+            The height of the cylinder used to drill.
+        epsilon : float
+            Numerical tolerance for perforation.
+
+        Returns
+        -------
+        MeshPartition
+            A new mesh partition with the hole drilled (split into two regions).
+        """
+        # Step 1: Find the vertex
+        vertex_indices = self.mesh.get_vertices_by_label(center_vertex_label)
+        if not vertex_indices:
+            raise ValueError(f"No vertex found with label '{center_vertex_label}'")
+
+        for center_idx in vertex_indices:
+            print(
+                f"Drilling hole at vertex index {center_idx} with label '{center_vertex_label}'"
+            )
+            center_point = self.mesh.vertices[center_idx]
+
+            # Step 2: Find adjacent faces in the region
+            adjacent_faces = [
+                idx
+                for idx, face in enumerate(self.mesh.faces)
+                if center_idx in face and self.face_to_region_map.get(idx) == region_id
+            ]
+            if not adjacent_faces:
+                print(
+                    f"No adjacent faces found for vertex {center_idx} in region {region_id}."
+                )
+                continue
+            # Step 3: Compute average normal from adjacent faces
+            normals = []
+            for face_idx in adjacent_faces:
+                v0, v1, v2 = self.mesh.vertices[self.mesh.faces[face_idx]]
+                normal = np.cross(v1 - v0, v2 - v0)
+                normals.append(normalize(normal))
+            avg_normal = normalize(np.mean(normals, axis=0))
+
+            # Step 4: Build the drilling cylinder
+            axis_start = center_point - 0.5 * height * avg_normal
+            axis_end = center_point + 0.5 * height * avg_normal
+
+            # Step 5: Perforate and split region by cylinder
+            return self.perforate_and_split_region_by_cylinder(
+                region_id=region_id,
+                bottom=axis_start,
+                axis=avg_normal,
+                height=height,
+                radius=radius,
+                epsilon=epsilon,
+                min_relative_area=min_relative_area,
+                min_angle_deg=min_angle_deg,
+            )
+
+        raise ValueError(
+            f"No valid vertex found with label '{center_vertex_label}' in region {region_id}."
+        )

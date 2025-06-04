@@ -913,6 +913,8 @@ class PartitionableSpheroidTriangleMesh:
         radius: float,
         epsilon: float = 1e-8,
         triangle_indices=None,
+        min_relative_area=1e-2,
+        min_angle_deg=5.0,
     ):
         cylinder = CylinderSpec(
             bottom=np.asarray(bottom_point),
@@ -920,5 +922,7 @@ class PartitionableSpheroidTriangleMesh:
             height=height,
             radius=radius,
         )
-        perf = self.compute_cylinder_perforation(cylinder, epsilon, triangle_indices)
+        perf = self.compute_cylinder_perforation(
+            cylinder, epsilon, triangle_indices, min_relative_area, min_angle_deg
+        )
         return self.apply_perforation(perf)
