@@ -272,3 +272,34 @@ def test_merge_three_collinear_connector_hints_backward():
     assert np.allclose(hint.edge_centroid, np.array([0.5, 0.0, 0.0]))
     assert sorted(hint.face_pair_ids) == [(1, 1), (2, 2), (3, 3)]
     print("test_merge_three_collinear_connector_hints_backward passed.")
+
+
+def test_compute_connector_hints_on_partition():
+    # Create initial mesh
+    points, _ = create_dodecahedron_geometry(1.0)
+    mesh = PartitionableSpheroidTriangleMesh.from_point_cloud(points)
+    partition = mesh.get_trivial_partition()
+
+    # Perforate and split to create two regions
+    plane_point = np.array([0.0, 0.0, 0.0])
+    plane_normal = np.array([1.0, 0.0, 0.0])
+    new_partition = partition.perforate_and_split_region_by_plane(
+        region_id=0,
+        plane_point=plane_point,
+        plane_normal=plane_normal,
+    )
+
+    # Compute connector hints
+    hints = new_partition.compute_connector_hints(shell_thickness=0.02)
+
+    # Basic checks
+    assert isinstance(hints, list)
+    assert all(h.region_a != h.region_b for h in hints)
+    assert all(h.region_a < h.region_b for h in hints)  # canonicalization
+    assert all(np.isclose(np.linalg.norm(h.edge_vector), 1.0) for h in hints)
+
+    # Optional debug output
+    for h in hints:
+        print(
+            f"Connector: {h.region_a} -> {h.region_b}, edge at {h.edge_centroid}, normal A {h.triangle_a_normal}, normal B {h.triangle_b_normal}"
+        )

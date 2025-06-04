@@ -7,6 +7,7 @@ from typing import List, Optional
 import networkx as nx
 import numpy as np
 from py_3d_construct_lib.connector_hint import ConnectorHint
+from py_3d_construct_lib.connector_utils import compute_connector_hints_from_shell_maps
 from py_3d_construct_lib.construct_utils import (
     compute_triangle_normal,
     fibonacci_sphere,
@@ -429,101 +430,20 @@ class MeshPartition:
     def compute_connector_hints(
         self, shell_thickness, merge_connectors=False
     ) -> list[ConnectorHint]:
-        mesh = self.mesh
-        face_to_region = self.face_to_region_map
-
-        shell_maps, vertex_index_map = mesh.calculate_materialized_shell_maps(
+        shell_maps, vertex_index_map = self.mesh.calculate_materialized_shell_maps(
             shell_thickness
         )
 
-        edge_to_faces = defaultdict(list)
-
-        # Build edge-to-face mapping
-        for f_idx, region in face_to_region.items():
-            face = mesh.faces[f_idx]
-            for i in range(3):
-                a, b = sorted((face[i], face[(i + 1) % 3]))
-                edge_to_faces[(a, b)].append((f_idx, region))
-
-        connector_hints = []
-
-        for edge, face_region_pairs in edge_to_faces.items():
-            if len(face_region_pairs) != 2:
-                raise ValueError(f"The edge {edge} is not shared by exactly two faces.")
-
-            (f_a, r_a), (f_b, r_b) = face_region_pairs
-            if r_a == r_b:
-                continue
-
-            # Canonicalize regions
-            if r_a > r_b:
-                (f_a, r_a), (f_b, r_b) = (f_b, r_b), (f_a, r_a)
-
-            face_a = mesh.faces[f_a]
-            shared_indices = set(face_a) & set(mesh.faces[f_b])
-
-            # preserve winding order from face_a
-            ordered_shared = []
-            for i in range(3):
-                a, b = face_a[i], face_a[(i + 1) % 3]
-                if a in shared_indices and b in shared_indices:
-                    ordered_shared = [a, b]
-                    break
-
-            if len(ordered_shared) != 2:
-                raise ValueError(
-                    f"Failed to find shared edge with correct order in face {f_a}"
-                )
-
-            vi1, vi2 = ordered_shared
-            # Get inner vertex positions from shell map
-            shell_map_a = shell_maps[f_a]
-            shell_map_b = shell_maps[f_b]
-
-            idx_map_a = vertex_index_map[f_a]["inner"]
-            idx_map_b = vertex_index_map[f_b]["inner"]
-
-            def inner_vertex(face_map, idx_map, vi):
-                return face_map["vertexes"][idx_map[vi]]
-
-            p1 = inner_vertex(shell_map_a, idx_map_a, vi1)
-            p2 = inner_vertex(shell_map_a, idx_map_a, vi2)
-
-            edge_vec = normalize(p2 - p1)
-            edge_mid = (p1 + p2) / 2
-
-            # Reconstruct triangle vertices for normal calculation
-            tri_a_verts = [
-                shell_map_a["vertexes"][idx_map_a[vi]] for vi in mesh.faces[f_a]
-            ]
-            tri_b_verts = [
-                shell_map_b["vertexes"][idx_map_b[vi]] for vi in mesh.faces[f_b]
-            ]
-
-            n_a = normalize(compute_triangle_normal(*tri_a_verts))
-            n_b = normalize(compute_triangle_normal(*tri_b_verts))
-
-            if np.dot(p1 - p2, edge_vec) > 0:
-                raise ValueError(
-                    f"Edge vector {edge_vec} points from p2 to p1, expected p1 to p2.   p1: {p1}, p2: {p2}, edge: {edge}"
-                )
-
-            hint = ConnectorHint(
-                region_a=r_a,
-                region_b=r_b,
-                triangle_a_vertices=tuple(tri_a_verts),
-                triangle_b_vertices=tuple(tri_b_verts),
-                triangle_a_normal=n_a,
-                triangle_b_normal=n_b,
-                edge_vector=edge_vec,
-                edge_centroid=edge_mid,
-                start_vertex=p1,
-                end_vertex=p2,
-            )
-            connector_hints.append(hint)
+        connector_hints = compute_connector_hints_from_shell_maps(
+            mesh_faces=self.mesh.faces,
+            face_to_region=self.face_to_region_map,
+            shell_maps=shell_maps,
+            vertex_index_map=vertex_index_map,
+        )
 
         if merge_connectors:
             connector_hints = merge_collinear_connectors(connector_hints)
+
         return sorted(
             connector_hints,
             key=lambda h: (h.region_a, h.region_b, tuple(h.edge_centroid)),

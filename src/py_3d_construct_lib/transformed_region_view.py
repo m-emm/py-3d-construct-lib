@@ -3,6 +3,7 @@ import math
 from typing import Optional
 
 import numpy as np
+from py_3d_construct_lib.connector_utils import transform_connector_hint
 from py_3d_construct_lib.construct_utils import fibonacci_sphere
 from py_3d_construct_lib.spherical_tools import rotation_matrix_from_vectors
 
@@ -115,17 +116,25 @@ class TransformedRegionView:
 
         return V_transformed, F, E
 
-    def get_transformed_materialized_shell_maps(self, **kwargs):
+    def get_transformed_materialized_shell_maps(
+        self, shell_thickness, shrinkage=0, shrink_border=0
+    ):
         """
         Return a dict of shell maps (face_id -> vertex/face map),
         where all vertex coordinates are transformed by the current affine matrix.
         """
-        maps = self.partition.mesh.calculate_materialized_shell_maps(**kwargs)
+        shell_maps, vertex_index_map = (
+            self.partition.mesh.calculate_materialized_shell_maps(
+                shell_thickness=shell_thickness,
+                shrinkage=shrinkage,
+                shrink_border=shrink_border,
+            )
+        )
         region_faces = self.partition.get_faces_of_region(self.region_id)
 
         result = {}
         for face_id in region_faces:
-            face_map = maps[face_id]
+            face_map = shell_maps[face_id]
             V = face_map["vertexes"]
             V_arr = np.array([V[k] for k in sorted(V)])
             V_homo = np.concatenate([V_arr, np.ones((len(V_arr), 1))], axis=1)
@@ -136,7 +145,35 @@ class TransformedRegionView:
                 "faces": face_map["faces"],
             }
 
-        return result
+        return result, vertex_index_map
+
+    def compute_transformed_connector_hints(
+        self, shell_thickness, merge_connectors=False
+    ):
+        """
+        Compute connector hints for this transformed region view.
+
+        Parameters:
+        -----------
+        shell_thickness : float
+            Thickness of the shell to use when computing materialized prisms.
+        merge_connectors : bool
+            Whether to merge collinear connectors after computation.
+
+        Returns:
+        --------
+        List[ConnectorHint]
+            List of connector hints on the transformed region.
+        """
+
+        connector_hints = self.partition.compute_connector_hints(
+            shell_thickness, merge_connectors
+        )
+        return [
+            transform_connector_hint(h, self.transform)
+            for h in connector_hints
+            if h.region_a == self.region_id or h.region_b == self.region_id
+        ]
 
     def lay_flat(self, definition_of_low: float = 1) -> "TransformedRegionView":
         """
