@@ -56,25 +56,25 @@ def merge_collinear_connectors(
                     )
 
                     if np.allclose(end_chain_vertex, a, atol=tol) and is_collinear:
-                        print(f"Found forward match: {j} to {chain[-1][0]}")
+                        # print(f"Found forward match: {j} to {chain[-1][0]}")
                         if are_normals_similar(
                             base.triangle_a_normal, hint.triangle_a_normal, angle_tol
                         ) and are_normals_similar(
                             base.triangle_b_normal, hint.triangle_b_normal, angle_tol
                         ):
 
-                            print(f"Appending forward: {j} to {chain[-1][0]}")
+                            # print(f"Appending forward: {j} to {chain[-1][0]}")
                             chain.append((j, a, b))
                             progress = True
                     elif np.allclose(start_chain_vertex, b, atol=tol) and is_collinear:
-                        print(f"Found backward match: {j} to {chain[0][0]}")
+                        # print(f"Found backward match: {j} to {chain[0][0]}")
                         if are_normals_similar(
                             base.triangle_a_normal, hint.triangle_a_normal, angle_tol
                         ) and are_normals_similar(
                             base.triangle_b_normal, hint.triangle_b_normal, angle_tol
                         ):
 
-                            print(f"Prepending forward: {j} to {chain[0][0]}")
+                            # print(f"Prepending forward: {j} to {chain[0][0]}")
                             chain.insert(0, (j, a, b))
                             progress = True
                     else:
@@ -82,7 +82,7 @@ def merge_collinear_connectors(
                 remaining = new_remaining
 
             if len(chain) == 1:
-                print(f"Found chain of length 1: {chain[0][0]}")
+                # print(f"Found chain of length 1: {chain[0][0]}")
                 merged_hints.append(group[chain[0][0]])
                 continue
 
@@ -227,6 +227,8 @@ def compute_connector_hints_from_shell_maps(
             edge_centroid=edge_mid,
             start_vertex=p1,
             end_vertex=p2,
+            original_edges=[(vi1, vi2)],
+            face_pair_ids=[(f_a, f_b)],
         )
         connector_hints.append(hint)
 

@@ -10,6 +10,10 @@ from py_3d_construct_lib.geometries import (
 from py_3d_construct_lib.partitionable_spheroid_triangle_mesh import (
     PartitionableSpheroidTriangleMesh,
 )
+from py_3d_construct_lib.spherical_tools import (
+    cartesian_to_spherical_jackson,
+    spherical_to_cartesian_jackson,
+)
 from py_3d_construct_lib.transformed_region_view import TransformedRegionView
 
 
@@ -232,3 +236,63 @@ def test_lay_flat_on_edge():
     assert (
         region_view.printability_score() > 0.1
     ), "Printability score should be at least 0.1"
+
+
+def test_numerical_instability():
+    sphere_radius = 30
+    shell_thickness = sphere_radius * 0.05
+    shrink_border = 0
+
+    mesh = PartitionableSpheroidTriangleMesh.create_fibonacci_sphere_mesh(
+        num_points=30, radius=sphere_radius
+    )
+
+    for i, v in enumerate(mesh.vertices):
+        print(f"Vertex: {i}: {v}")
+
+    new_vertices = []
+
+    random_size = sphere_radius * 0.1
+    new_vertices = []
+
+    for v in mesh.vertices:
+        r, theta, phi = cartesian_to_spherical_jackson(v)
+        # r += np.random.uniform(-random_size, random_size)
+
+        print(
+            f"Vertex: Cartesian: {v} -> Spherical: (r={r:.2f}, theta={theta:.2f}, phi={phi:.2f})"
+        )
+
+        back = spherical_to_cartesian_jackson((r, theta, phi))
+        # back = [ 0.0 if abs(coord) < 1e-6 else coord for coord in back ]
+
+        new_vertices.append([back[0], back[1], back[2]])
+
+    new_vertices = np.array(new_vertices)
+
+    # for i, v in enumerate(mesh.vertices):
+    #     assert np.allclose(v, new_vertices[i])
+
+    assert len(new_vertices) == len(mesh.vertices)
+
+    for i, v in enumerate(new_vertices):
+        print(f"Vertex: {i}: {v}")
+
+    mesh = PartitionableSpheroidTriangleMesh.from_point_cloud(new_vertices)
+
+    for f in sorted([tuple(f) for f in mesh.faces]):
+        print(f"Mesh face: {f}")
+
+    partition = mesh.get_trivial_partition()
+
+    partition = partition.perforate_and_split_region_by_plane(
+        region_id=0,
+        plane_point=np.array([0, 0, 0]),
+        plane_normal=np.array([0, 0, 1]),
+    )
+
+    shell_maps, _ = partition.mesh.calculate_materialized_shell_maps(
+        shell_thickness=shell_thickness,
+        shrinkage=0,
+        shrink_border=shrink_border,
+    )

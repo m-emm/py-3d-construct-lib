@@ -8,6 +8,7 @@ from py_3d_construct_lib.construct_utils import (
     compute_barycentric_coords,
     normalize_edge,
     split_triangle_topologically,
+    triangle_area,
     triangle_edges,
 )
 from py_3d_construct_lib.mesh_partition import MeshPartition
@@ -158,6 +159,17 @@ class PartitionableSpheroidTriangleMesh:
                 isinstance(label, str) for label in self.vertex_labels
             ), "All vertex labels must be strings"
 
+        # check for degenerate triangles
+
+        characteristic_leghth = np.max(np.linalg.norm(self.vertices, axis=1))
+        for face in self.faces:
+            area = triangle_area(*self.vertices[face])
+            if area < 1e-6 * characteristic_leghth**2:
+                raise ValueError(
+                    f"Degenerate triangle with area {area:.6f} detected in face {face}. "
+                    "Ensure that the mesh is well-formed and triangles are not too small."
+                )
+
     def get_vertex_triangles(self, vertex_index):
         """
         Returns a list of triangle indices that contain the given vertex.
@@ -297,15 +309,23 @@ class PartitionableSpheroidTriangleMesh:
             inner = intersect_ray_plane(sphere_center, ray_dir, plane_point, tri_normal)
             inner_verts.append(inner)
 
-        inner_verts_sperical = [
+        inner_verts_spherical = [
             cartesian_to_spherical_jackson(v - sphere_center) for v in inner_verts
         ]
 
         for outer_vert_spherical, inner_vert_spherical in zip(
-            spherical_vertexes, inner_verts_sperical
+            spherical_vertexes, inner_verts_spherical
         ):
             # inner radius must be less than outer radius
             if inner_vert_spherical[0] >= outer_vert_spherical[0]:
+                print(
+                    f"tri_normal: {tri_normal}, norm_of_tri_normal: {np.linalg.norm(tri_normal)}"
+                )
+                print(f"innner verts: {inner_verts}")
+                print(f"outer_verts: {outer_verts}")
+                print(f"outer_vert_spherical: {outer_vert_spherical}")
+                print(f"inner_verts_spherical: {inner_verts_spherical}")
+                print(f"inner triangle area: {triangle_area(*inner_verts)}")
                 raise ValueError(
                     f"Inner radius {inner_vert_spherical[0]} must be less than outer radius {outer_vert_spherical[0]}"
                 )
@@ -665,10 +685,25 @@ class PartitionableSpheroidTriangleMesh:
                 t = -np.dot(plane_normal, w) / denom
                 if 0 < t < 1:
                     ipt = (1 - t) * Va + t * Vb
-                    edge_to_cutpoint_index[edge] = next_index
-                    new_vertices.append(ipt)
-                    new_labels.append(f"{labels_orig[edge[0]]}__{labels_orig[edge[1]]}")
-                    next_index += 1
+
+                    # Check if the intersection point is already in vertices
+
+                    closest_vertex_index = np.argmin(
+                        np.linalg.norm(V_orig - ipt, axis=1)
+                    )
+                    closest_new_vertex = V_orig[closest_vertex_index]
+                    if np.linalg.norm(closest_new_vertex - ipt) < epsilon:
+                        # Intersection point is close to an existing vertex, use that
+                        ipt = closest_new_vertex
+                        continue
+                        # edge_to_cutpoint_index[edge] = closest_vertex_index
+                    else:
+                        edge_to_cutpoint_index[edge] = next_index
+                        new_vertices.append(ipt)
+                        new_labels.append(
+                            f"{labels_orig[edge[0]]}__{labels_orig[edge[1]]}"
+                        )
+                        next_index += 1
 
         # --- Step 1.5: Expand triangle_indices to include all triangles that touch cut edges
         if edge_to_cutpoint_index:
@@ -692,6 +727,14 @@ class PartitionableSpheroidTriangleMesh:
         )
         labels_new = labels_orig + new_labels
 
+        # check if new vertices are unique
+        for i, vi in enumerate(new_vertices):
+            for j in range(i + 1, len(new_vertices)):
+                if np.allclose(vi, new_vertices[j], atol=1e-6):
+                    raise ValueError(
+                        f"New vertex {vi} at index {i + len(V_orig)} is not unique."
+                    )
+
         # Step 3: Subdivide triangles
         F_new = []
         for orig_index, tri in enumerate(F_orig):
@@ -713,6 +756,15 @@ class PartitionableSpheroidTriangleMesh:
                 new_index = len(F_new)
                 new_face_indices.append(new_index)
                 F_new.append(t)
+
+                # check area of the new triangle
+                area = triangle_area(*V_new[t])
+                characteristic_length = np.max(np.linalg.norm(V_new, axis=1))
+                if area < 1e-6 * characteristic_length**2:
+                    raise ValueError(
+                        f"Would create degenerate triangle with area {area:.6f} "
+                        f"for face {orig_index} with vertices {t}, when splitting {orig_index}."
+                    )
 
             face_index_mapping[orig_index] = new_face_indices
 

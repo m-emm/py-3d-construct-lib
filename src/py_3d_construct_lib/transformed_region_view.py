@@ -325,7 +325,7 @@ class TransformedRegionView:
             )
         face = F[face_index_in_region]
         a, b, c = [V[i] for i in face]
-        print(f"Laying flat on face: {face}, vertices: {a}, {b}, {c}")
+        # print(f"Laying flat on face: {face}, vertices: {a}, {b}, {c}")
         # 2) Compute centroid pivot
         centroid = (a + b + c) / 3
         # 3) Build rotation R that carries face_normal → [0,0,1]
@@ -473,9 +473,6 @@ class TransformedRegionView:
 
             # Skip nearly vertical edges — they print fine
             if abs(edge_dir[2]) > vertical_edge_cos:
-                print(
-                    f"Edge {a}-{b} is nearly vertical (z = {edge_dir[2]:.3f}), skipping."
-                )
                 continue
 
             triangle_normal = np.cross(V[tri[1]] - V[tri[0]], V[tri[2]] - V[tri[0]])
@@ -682,9 +679,6 @@ class TransformedRegionView:
             area2 = triangle_area(p1, p2, q2)
 
             if area1 < 1e-8 and area2 < 1e-8:
-                print(
-                    f"Skipping degenerate triangle for edges ({i1},{j1}) + ({i2},{j2})"
-                )
                 continue
 
             found_candidate = True
@@ -706,19 +700,12 @@ class TransformedRegionView:
             if not np.isclose(v_check_1[2], 0.0, atol=1e-5) or not np.isclose(
                 v_check_2[2], 0.0, atol=1e-5
             ):
-                print(
-                    f"Skipping edge pair ({i1},{j1}) and ({i2},{j2}) due to z mismatch: "
-                    f"{v_check_1[2]:.5f}, {v_check_2[2]:.5f}"
-                )
                 continue
 
             new_view = self.apply_transform(A)
             new_V, _, _ = new_view.get_transformed_vertices_faces_boundary_edges()
 
             if np.any(new_V[:, 2] < -1e-6):
-                print(
-                    f"Skipping edge pair ({i1},{j1}) and ({i2},{j2}) due to underwater vertices"
-                )
                 continue
 
             score = new_view.printability_score(angle_threshold_rad)

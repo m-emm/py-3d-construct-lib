@@ -17,8 +17,8 @@ class ConnectorHint:
     start_vertex: np.ndarray
     end_vertex: np.ndarray
     # Optional fields to keep track of merged provenance
-    original_edges: list[Tuple[int, int]] = field(default_factory=list)
-    face_pair_ids: list[Tuple[int, int]] = field(default_factory=list)
+    original_edges: list[Tuple[int, int]]
+    face_pair_ids: list[Tuple[int, int]]
 
     def __repr__(self):
         retval = "\n".join(
