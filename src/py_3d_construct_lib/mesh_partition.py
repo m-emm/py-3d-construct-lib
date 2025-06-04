@@ -131,25 +131,33 @@ def merge_collinear_connectors(
             first_hint = group[chain[0][0]]
 
             # Get apex vertices by excluding edge from triangle vertex set
-            edge_verts = {tuple(start), tuple(end)}
-            apex_a = next(
-                v for v in first_hint.triangle_a_vertices if tuple(v) not in edge_verts
-            )
-            apex_b = next(
-                v for v in first_hint.triangle_b_vertices if tuple(v) not in edge_verts
-            )
 
-            tri_a = (start, end, apex_a)
-            tri_b = (end, start, apex_b)
+            tri_a = np.array(first_hint.triangle_a_vertices)
 
-            new_hint = replace(
-                first_hint,
-                edge_vector=edge_vec,
-                edge_centroid=edge_mid,
+            for i in range(3):
+                if np.allclose(tri_a[i], first_hint.start_vertex, atol=tol):
+                    tri_a[i] = start
+                elif np.allclose(tri_a[i], first_hint.end_vertex, atol=tol):
+                    tri_a[i] = end
+
+            tri_b = np.array(first_hint.triangle_b_vertices)
+            for i in range(3):
+                if np.allclose(tri_b[i], first_hint.start_vertex, atol=tol):
+                    tri_b[i] = start
+                elif np.allclose(tri_b[i], first_hint.end_vertex, atol=tol):
+                    tri_b[i] = end
+
+            new_hint = ConnectorHint(
+                region_a=first_hint.region_a,
+                region_b=first_hint.region_b,
                 triangle_a_vertices=tri_a,
                 triangle_b_vertices=tri_b,
                 triangle_a_normal=first_hint.triangle_a_normal,
                 triangle_b_normal=first_hint.triangle_b_normal,
+                edge_vector=first_hint.edge_vector,
+                edge_centroid=edge_mid,
+                start_vertex=start,
+                end_vertex=end,
                 face_pair_ids=[
                     fid
                     for j, *_ in chain
@@ -161,6 +169,16 @@ def merge_collinear_connectors(
                     for e in getattr(group[j], "original_edges", [])
                 ],
             )
+
+            if len(chain) > 1:
+                for chain_member in chain:
+                    current_hint = group[chain_member[0]]
+                    original_edge_vec = (
+                        current_hint.end_vertex - current_hint.start_vertex
+                    )
+
+                    assert np.dot(original_edge_vec, new_hint.edge_vector) > 0
+
             merged_hints.append(new_hint)
     print(f"Merged into {len(merged_hints)} connector hints (from {original_count})")
 
@@ -484,6 +502,11 @@ class MeshPartition:
 
             n_a = normalize(compute_triangle_normal(*tri_a_verts))
             n_b = normalize(compute_triangle_normal(*tri_b_verts))
+
+            if np.dot(p1 - p2, edge_vec) > 0:
+                raise ValueError(
+                    f"Edge vector {edge_vec} points from p2 to p1, expected p1 to p2.   p1: {p1}, p2: {p2}, edge: {edge}"
+                )
 
             hint = ConnectorHint(
                 region_a=r_a,
