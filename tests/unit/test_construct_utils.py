@@ -1,23 +1,19 @@
 import logging
 import math
 
+import numpy as np
 import pytest
 from py_3d_construct_lib.construct_utils import (
+    CylinderSpec,
     compute_area,
+    intersect_edge_with_cylinder,
+    normalize,
     normalize_edge,
     split_triangle_topologically,
     triangle_edges,
 )
 
 _logger = logging.getLogger(__name__)
-import math
-
-from py_3d_construct_lib.construct_utils import (
-    compute_area,
-    normalize_edge,
-    split_triangle_topologically,
-    triangle_edges,
-)
 
 
 def test_split_triangle_topologically_one_edge_split():
@@ -260,3 +256,101 @@ def test_split_triangle_topologically_three_edge_split_wild_numbering():
         if edge in edge_to_new_vertex:
             continue
         assert count in (1, 2), f"Edge {edge} appears {count} times"
+
+
+def test_intersect_edge_with_cylinder_basic():
+    cylinder = CylinderSpec(
+        bottom=np.array([0.0, 0.0, 0.0]),
+        normal=np.array([0.0, 0.0, 1.0]),
+        height=1.0,
+        radius=1.0,
+    )
+
+    # Edge goes through the cylinder vertically
+    p1 = np.array([0.5, 0.0, -1.0])
+    p2 = np.array([0.5, 0.0, 2.0])
+
+    result = intersect_edge_with_cylinder(p1, p2, cylinder)
+    assert result is not None
+    t1, t2 = result
+    assert 0.0 <= t1 < t2 <= 1.0
+
+    # Edge far outside cylinder
+    p3 = np.array([2.0, 0.0, -1.0])
+    p4 = np.array([2.0, 0.0, 2.0])
+    assert intersect_edge_with_cylinder(p3, p4, cylinder) is None
+
+    # Edge tangent to cylinder
+    p5 = np.array([1.0, -1.0, 0.5])
+    p6 = np.array([1.0, 1.0, 0.5])
+    result = intersect_edge_with_cylinder(p5, p6, cylinder)
+    assert result is None or (0.0 <= result[0] <= result[1] <= 1.0)
+
+
+def test_intersect_edge_with_cylinder_lateral_entry_exit():
+    cylinder = CylinderSpec(
+        bottom=np.array([0.0, 0.0, 0.0]),
+        normal=np.array([0.0, 0.0, 1.0]),
+        height=1.0,
+        radius=1.0,
+    )
+
+    # Edge enters cylinder from the side and exits again
+    p1 = np.array([-2.0, 0.0, 0.5])
+    p2 = np.array([2.0, 0.0, 0.5])
+
+    result = intersect_edge_with_cylinder(p1, p2, cylinder)
+    assert result is not None
+    t1, t2 = result
+    assert 0.0 <= t1 < t2 <= 1.0
+
+
+def test_intersect_edge_with_cylinder_top_cap_touch():
+    cylinder = CylinderSpec(
+        bottom=np.array([0.0, 0.0, 0.0]),
+        normal=np.array([0.0, 0.0, 1.0]),
+        height=1.0,
+        radius=1.0,
+    )
+
+    # Edge starts inside cylinder and exits exactly at top
+    p1 = np.array([0.0, 0.0, 0.5])
+    p2 = np.array([0.0, 0.0, 1.0])
+
+    result = intersect_edge_with_cylinder(p1, p2, cylinder)
+    assert result is not None
+    t1, t2 = result
+    assert np.isclose(t2, 1.0)
+
+
+def test_intersect_edge_with_cylinder_diagonal():
+    cylinder = CylinderSpec(
+        bottom=np.array([0.0, 0.0, 0.0]),
+        normal=np.array([0.0, 0.0, 1.0]),
+        height=1.0,
+        radius=1.0,
+    )
+
+    # Enters at bottom-left, exits top-right
+    p1 = np.array([-2.0, -2.0, -1.0])
+    p2 = np.array([2.0, 2.0, 2.0])
+
+    result = intersect_edge_with_cylinder(p1, p2, cylinder)
+    assert result is not None
+    t1, t2 = result
+    assert 0.0 <= t1 < t2 <= 1.0
+
+
+def test_intersect_edge_with_cylinder_outside_radius():
+    cylinder = CylinderSpec(
+        bottom=np.array([0.0, 0.0, 0.0]),
+        normal=np.array([0.0, 0.0, 1.0]),
+        height=2.0,
+        radius=1.0,
+    )
+
+    # Completely parallel, at z=1, but 2 units to the side
+    p1 = np.array([2.0, 0.0, 1.0])
+    p2 = np.array([3.0, 0.0, 1.0])
+
+    assert intersect_edge_with_cylinder(p1, p2, cylinder) is None

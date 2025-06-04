@@ -1,15 +1,20 @@
 import copy
 import logging
 from collections import Counter, defaultdict, deque
+from dataclasses import dataclass
 
 import numpy as np
 from py_3d_construct_lib.construct_utils import (
+    CylinderSpec,
     compute_area,
     compute_barycentric_coords,
+    intersect_edge_with_cylinder,
+    normalize,
     normalize_edge,
     split_triangle_topologically,
     triangle_area,
     triangle_edges,
+    triangle_min_angle,
 )
 from py_3d_construct_lib.mesh_partition import MeshPartition
 from py_3d_construct_lib.spherical_tools import (
@@ -19,6 +24,14 @@ from py_3d_construct_lib.spherical_tools import (
 from scipy.spatial import ConvexHull
 
 _logger = logging.getLogger(__name__)
+
+
+@dataclass
+class PerforationResult:
+    edge_to_new_vertex_index: dict[tuple[int, int], int]
+    new_vertices: list[np.ndarray]
+    new_labels: list[str]
+    triangle_indices: set[int]
 
 
 def calc_edge_to_triangle_map(triangles):
@@ -645,21 +658,18 @@ class PartitionableSpheroidTriangleMesh:
 
         return canon_faces
 
-    def perforate_along_plane(
-        self, plane_point, plane_normal, epsilon=1e-8, triangle_indices=None
-    ):
-        V_orig = self.vertices
-        F_orig = self.faces
-        labels_orig = self.vertex_labels
+    def compute_plane_perforation(
+        mesh, plane_point, plane_normal, epsilon=1e-8, triangle_indices=None
+    ) -> PerforationResult:
+        V_orig = mesh.vertices
+        F_orig = mesh.faces
+        labels_orig = mesh.vertex_labels
 
         all_tri_indices = range(len(F_orig))
         triangle_indices = set(
             all_tri_indices if triangle_indices is None else triangle_indices
         )
 
-        face_index_mapping = {}
-
-        # Step 1: Find intersected edges and compute new vertices
         edge_to_cutpoint_index = {}
         new_vertices = []
         new_labels = []
@@ -680,23 +690,17 @@ class PartitionableSpheroidTriangleMesh:
                 denom = np.dot(plane_normal, d)
 
                 if abs(denom) < epsilon:
-                    continue  # edge is parallel to plane
+                    continue
 
                 t = -np.dot(plane_normal, w) / denom
                 if 0 < t < 1:
                     ipt = (1 - t) * Va + t * Vb
 
-                    # Check if the intersection point is already in vertices
-
                     closest_vertex_index = np.argmin(
                         np.linalg.norm(V_orig - ipt, axis=1)
                     )
-                    closest_new_vertex = V_orig[closest_vertex_index]
-                    if np.linalg.norm(closest_new_vertex - ipt) < epsilon:
-                        # Intersection point is close to an existing vertex, use that
-                        ipt = closest_new_vertex
+                    if np.linalg.norm(V_orig[closest_vertex_index] - ipt) < epsilon:
                         continue
-                        # edge_to_cutpoint_index[edge] = closest_vertex_index
                     else:
                         edge_to_cutpoint_index[edge] = next_index
                         new_vertices.append(ipt)
@@ -705,7 +709,7 @@ class PartitionableSpheroidTriangleMesh:
                         )
                         next_index += 1
 
-        # --- Step 1.5: Expand triangle_indices to include all triangles that touch cut edges
+        # expand triangle indices to those touched by perforated edges
         if edge_to_cutpoint_index:
             edge_to_tri_indices = defaultdict(set)
             for tri_idx, tri in enumerate(F_orig):
@@ -719,36 +723,42 @@ class PartitionableSpheroidTriangleMesh:
 
             triangle_indices.update(affected_tri_indices)
 
-        # Step 2: Combine old and new vertices
+        return PerforationResult(
+            edge_to_new_vertex_index=edge_to_cutpoint_index,
+            new_vertices=new_vertices,
+            new_labels=new_labels,
+            triangle_indices=triangle_indices,
+        )
+
+    def apply_perforation(mesh, perforation: PerforationResult):
+        V_orig = mesh.vertices
+        F_orig = mesh.faces
+        labels_orig = mesh.vertex_labels
+
         V_new = (
-            np.vstack([V_orig, np.array(new_vertices)])
-            if new_vertices
+            np.vstack([V_orig, np.array(perforation.new_vertices)])
+            if perforation.new_vertices
             else V_orig.copy()
         )
-        labels_new = labels_orig + new_labels
+        labels_new = labels_orig + perforation.new_labels
 
-        # check if new vertices are unique
-        for i, vi in enumerate(new_vertices):
-            for j in range(i + 1, len(new_vertices)):
-                if np.allclose(vi, new_vertices[j], atol=1e-6):
-                    raise ValueError(
-                        f"New vertex {vi} at index {i + len(V_orig)} is not unique."
-                    )
-
-        # Step 3: Subdivide triangles
         F_new = []
+        face_index_mapping = {}
+
         for orig_index, tri in enumerate(F_orig):
-            if orig_index not in triangle_indices:
-                # Keep untouched triangle as-is
-                face_index_mapping[orig_index] = [len(F_new)]
-                F_new.append(tuple(tri))
-                continue
 
             edge_to_new_vertex = {}
             for edge in triangle_edges(tri):
                 norm_edge = normalize_edge(*edge)
-                if norm_edge in edge_to_cutpoint_index:
-                    edge_to_new_vertex[norm_edge] = edge_to_cutpoint_index[norm_edge]
+                if norm_edge in perforation.edge_to_new_vertex_index:
+                    edge_to_new_vertex[norm_edge] = (
+                        perforation.edge_to_new_vertex_index[norm_edge]
+                    )
+
+            if not edge_to_new_vertex:
+                face_index_mapping[orig_index] = [len(F_new)]
+                F_new.append(tuple(tri))
+                continue
 
             new_tris = split_triangle_topologically(tri, edge_to_new_vertex)
             new_face_indices = []
@@ -757,25 +767,118 @@ class PartitionableSpheroidTriangleMesh:
                 new_face_indices.append(new_index)
                 F_new.append(t)
 
-                # check area of the new triangle
                 area = triangle_area(*V_new[t])
                 characteristic_length = np.max(np.linalg.norm(V_new, axis=1))
                 if area < 1e-6 * characteristic_length**2:
-                    raise ValueError(
-                        f"Would create degenerate triangle with area {area:.6f} "
-                        f"for face {orig_index} with vertices {t}, when splitting {orig_index}."
-                    )
+                    raise ValueError(f"Degenerate triangle in face {orig_index}.")
 
             face_index_mapping[orig_index] = new_face_indices
 
-        # Step 4: Canonicalize and validate
-        F_new = self.canonicalize_faces(F_new)
-
+        F_new = mesh.canonicalize_faces(F_new)
         f_new_set = set(tuple(sorted(f)) for f in F_new)
         if len(f_new_set) != len(F_new):
-            raise ValueError("Generated faces are not unique, there are duplicates.")
+            raise ValueError("Generated faces are not unique.")
 
         return (
             PartitionableSpheroidTriangleMesh(V_new, np.array(F_new), labels_new),
             face_index_mapping,
         )
+
+    def perforate_along_plane(
+        self, plane_point, plane_normal, epsilon=1e-8, triangle_indices=None
+    ):
+        perf = self.compute_plane_perforation(
+            plane_point, plane_normal, epsilon, triangle_indices
+        )
+        return self.apply_perforation(perf)
+
+    def compute_cylinder_perforation(
+        mesh,
+        cylinder: CylinderSpec,
+        epsilon=1e-8,
+        triangle_indices=None,
+        min_relative_area=1e-6,
+        min_angle_deg=5.0,
+    ) -> PerforationResult:
+        V_orig = mesh.vertices
+        F_orig = mesh.faces
+        labels_orig = mesh.vertex_labels
+
+        all_tri_indices = range(len(F_orig))
+        triangle_indices = set(
+            all_tri_indices if triangle_indices is None else triangle_indices
+        )
+
+        edge_to_cutpoint_index = {}
+        new_vertices = []
+        new_labels = []
+        next_index = len(V_orig)
+        seen_edges = set()
+
+        for tri_idx in triangle_indices:
+            tri = F_orig[tri_idx]
+            for a, b in triangle_edges(tri):
+                edge = normalize_edge(a, b)
+                if edge in seen_edges:
+                    continue
+                seen_edges.add(edge)
+
+                p1, p2 = V_orig[edge[0]], V_orig[edge[1]]
+                result = intersect_edge_with_cylinder(p1, p2, cylinder)
+                if result is not None:
+                    t1, t2 = result
+                    for t in (t1, t2):
+                        if 0 < t < 1:
+                            ipt = (1 - t) * p1 + t * p2
+                            closest = np.argmin(np.linalg.norm(V_orig - ipt, axis=1))
+                            if np.linalg.norm(V_orig[closest] - ipt) < epsilon:
+                                continue
+                            edge_to_cutpoint_index[edge] = next_index
+                            new_vertices.append(ipt)
+                            new_labels.append(
+                                f"{labels_orig[edge[0]]}__{labels_orig[edge[1]]}"
+                            )
+                            next_index += 1
+                            print(
+                                f"Inserted cutpoint {ipt} on edge {edge} of triangle {tri_idx}"
+                            )
+                            break  # only one insertion per edge
+
+        # Expand triangle set
+        if edge_to_cutpoint_index:
+            edge_to_tri_indices = defaultdict(set)
+            for tri_idx, tri in enumerate(F_orig):
+                for edge in triangle_edges(tri):
+                    norm_edge = normalize_edge(*edge)
+                    edge_to_tri_indices[norm_edge].add(tri_idx)
+
+            affected_tri_indices = set()
+            for cut_edge in edge_to_cutpoint_index:
+                affected_tri_indices.update(edge_to_tri_indices[cut_edge])
+
+            triangle_indices.update(affected_tri_indices)
+
+        return PerforationResult(
+            edge_to_new_vertex_index=edge_to_cutpoint_index,
+            new_vertices=new_vertices,
+            new_labels=new_labels,
+            triangle_indices=triangle_indices,
+        )
+
+    def perforate_with_cylinder(
+        self,
+        bottom_point: np.ndarray,
+        axis_direction: np.ndarray,
+        height: float,
+        radius: float,
+        epsilon: float = 1e-8,
+        triangle_indices=None,
+    ):
+        cylinder = CylinderSpec(
+            bottom=np.asarray(bottom_point),
+            normal=normalize(np.asarray(axis_direction)),
+            height=height,
+            radius=radius,
+        )
+        perf = self.compute_cylinder_perforation(cylinder, epsilon, triangle_indices)
+        return self.apply_perforation(perf)

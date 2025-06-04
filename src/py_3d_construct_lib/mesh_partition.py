@@ -25,6 +25,19 @@ from py_3d_construct_lib.transformed_region_view import TransformedRegionView
 _logger = logging.getLogger(__name__)
 
 
+def point_inside_cylinder(point, bottom, axis, height, radius, epsilon=1e-9):
+    """
+    Return True if the point lies inside or on the surface of the finite cylinder.
+    """
+    v = point - bottom
+    axis = normalize(axis)
+    height_proj = np.dot(v, axis)
+    if not (0 - epsilon <= height_proj <= height + epsilon):
+        return False
+    radial_vec = v - height_proj * axis
+    return np.linalg.norm(radial_vec) <= radius + epsilon
+
+
 def are_collinear(
     p1: np.ndarray, p2: np.ndarray, q1: np.ndarray, q2: np.ndarray, tol: float = 1e-3
 ) -> bool:
@@ -1333,5 +1346,47 @@ class MeshPartition:
                     new_face_to_region[new_face_idx] = region_id
                 else:
                     new_face_to_region[new_face_idx] = new_region_id
+
+        return MeshPartition(new_mesh, new_face_to_region)
+
+    def perforate_and_split_region_by_cylinder(
+        self,
+        region_id: int,
+        bottom: np.ndarray,
+        axis: np.ndarray,
+        height: float,
+        radius: float,
+        epsilon: float = 1e-9,
+    ) -> "MeshPartition":
+        region_faces = [
+            idx for idx, r in self.face_to_region_map.items() if r == region_id
+        ]
+
+        new_mesh, face_index_map = self.mesh.perforate_with_cylinder(
+            bottom, axis, height, radius, epsilon=epsilon, triangle_indices=region_faces
+        )
+
+        new_face_to_region = {}
+        max_region_id = max(self.face_to_region_map.values())
+        new_region_id = max_region_id + 1
+
+        for old_face_idx, new_face_indices in face_index_map.items():
+            old_region = self.face_to_region_map[old_face_idx]
+            if old_region != region_id:
+                for new_face in new_face_indices:
+                    new_face_to_region[new_face] = old_region
+                continue
+
+            # classify by centroid
+            for new_face in new_face_indices:
+                face = new_mesh.faces[new_face]
+                centroid = new_mesh.vertices[face].mean(axis=0)
+
+                if point_inside_cylinder(
+                    centroid, bottom, axis, height, radius, epsilon
+                ):
+                    new_face_to_region[new_face] = region_id
+                else:
+                    new_face_to_region[new_face] = new_region_id
 
         return MeshPartition(new_mesh, new_face_to_region)

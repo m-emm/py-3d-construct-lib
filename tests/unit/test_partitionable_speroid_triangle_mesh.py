@@ -1,12 +1,17 @@
 import logging
+import math
 from collections import defaultdict
 
 import numpy as np
 from py_3d_construct_lib.construct_utils import (
+    CylinderSpec,
     compute_triangle_normal,
-    create_dodecahedron_geometry,
     normalize,
     triangle_area,
+)
+from py_3d_construct_lib.geometries import (
+    create_cube_geometry,
+    create_dodecahedron_geometry,
 )
 from py_3d_construct_lib.partitionable_spheroid_triangle_mesh import (
     PartitionableSpheroidTriangleMesh,
@@ -414,3 +419,19 @@ def test_perforate_along_plane_dodecahedron_check_normals():
     assert (
         abs(area_before - area_after) < 1e-5
     ), f"Area mismatch: before={area_before}, after={area_after}"
+
+
+def test_perforate_with_cylinder_basic():
+    # Create a test mesh: cube or small tetrahedron
+    verts, faces = create_cube_geometry(radius=4 * math.sqrt(3) / 2.0)
+    labels = [str(i) for i in range(len(verts))]
+    mesh = PartitionableSpheroidTriangleMesh(verts, faces, labels)
+
+    new_mesh, face_map = mesh.perforate_with_cylinder(
+        np.array([0.0, 0.0, -1.0]),
+        axis_direction=np.array([0.0, 0.0, 1.0]),
+        height=1000,
+        radius=1.0,
+    )
+    assert len(new_mesh.vertices) > len(verts)
+    assert all(len(f) == 3 for f in new_mesh.faces)

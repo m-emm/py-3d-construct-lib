@@ -1,7 +1,6 @@
 import numpy as np
 from py_3d_construct_lib.connector_hint import ConnectorHint
 from py_3d_construct_lib.connector_utils import compute_connector_hints_from_shell_maps
-from py_3d_construct_lib.construct_utils import normalize
 from py_3d_construct_lib.face_point_cloud import sphere_radius
 from py_3d_construct_lib.geometries import create_cube_geometry
 from py_3d_construct_lib.partitionable_spheroid_triangle_mesh import (

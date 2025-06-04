@@ -4,7 +4,12 @@ from collections import defaultdict
 import numpy as np
 from py_3d_construct_lib.connector_hint import ConnectorHint
 from py_3d_construct_lib.connector_utils import merge_collinear_connectors
-from py_3d_construct_lib.construct_utils import create_dodecahedron_geometry, normalize
+from py_3d_construct_lib.construct_utils import normalize
+from py_3d_construct_lib.geometries import (
+    create_cube_geometry,
+    create_dodecahedron_geometry,
+    create_tetrahedron_geometry,
+)
 from py_3d_construct_lib.partitionable_spheroid_triangle_mesh import (
     PartitionableSpheroidTriangleMesh,
 )
@@ -384,36 +389,5 @@ def test_merge_connector_hints_tetrahedron():
             face_pair_ids=[],
         ),
     ]
-
-    def simplify_and_print_connector_hints(hints: list[ConnectorHint]):
-        print("[")
-        for i, hint in enumerate(hints):
-            print(
-                f"ConnectorHint(\n    region_a={hint.region_a},\n    region_b={hint.region_b},"
-            )
-            print("    triangle_a_vertices=(")
-            for v in hint.triangle_a_vertices:
-                print(f"        {format_array(v)},")
-            print("    ),")
-            print("    triangle_b_vertices=(")
-            for v in hint.triangle_b_vertices:
-                print(f"        {format_array(v)},")
-            print("    ),")
-            print(
-                f"    triangle_a_normal={format_array(normalize(hint.triangle_a_normal))},"
-            )
-            print(
-                f"    triangle_b_normal={format_array(normalize(hint.triangle_b_normal))},"
-            )
-            print(f"    edge_vector={format_array(normalize(hint.edge_vector))},")
-            print(f"    edge_centroid={format_array(hint.edge_centroid)},")
-            print(f"    start_vertex={format_array(hint.start_vertex)},")
-            print(f"    end_vertex={format_array(hint.end_vertex)},")
-            print(f"    original_edges={hint.original_edges},")
-            print(f"    face_pair_ids={hint.face_pair_ids},\n),\n")
-
-        print("]")
-
-    # simplify_and_print_connector_hints(connector_hints)
 
     assert len(merge_collinear_connectors(connector_hints)) == 3

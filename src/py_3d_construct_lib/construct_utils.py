@@ -1,4 +1,6 @@
 import math
+from dataclasses import dataclass
+from typing import Optional, Tuple
 
 import numpy as np
 from py_3d_construct_lib.spherical_tools import rotation_matrix_from_vectors
@@ -67,69 +69,6 @@ def compute_barycentric_coords(p, tri):
     w = (d00 * d21 - d01 * d20) / denom
     u = 1 - v - w
     return np.array([u, v, w])
-
-
-def create_dodecahedron_geometry(radius=1.0):
-    """
-    Returns:
-      verts: (20,3) numpy array of vertex coordinates on sphere of given radius
-      faces: (12,5) numpy array of pentagon indices into verts (CCW)
-    """
-    phi = (1 + np.sqrt(5)) / 2  # golden ratio
-
-    # Create the 20 vertices
-    raw_verts = np.array(
-        [
-            # 8 vertices at (±1, ±1, ±1)
-            [-1, -1, -1],
-            [-1, -1, 1],
-            [-1, 1, -1],
-            [-1, 1, 1],
-            [1, -1, -1],
-            [1, -1, 1],
-            [1, 1, -1],
-            [1, 1, 1],
-            # 12 vertices at even permutations of (0, ±1/phi, ±phi)
-            [0, -1 / phi, -phi],
-            [0, -1 / phi, phi],
-            [0, 1 / phi, -phi],
-            [0, 1 / phi, phi],
-            [-1 / phi, -phi, 0],
-            [-1 / phi, phi, 0],
-            [1 / phi, -phi, 0],
-            [1 / phi, phi, 0],
-            [-phi, 0, -1 / phi],
-            [phi, 0, -1 / phi],
-            [-phi, 0, 1 / phi],
-            [phi, 0, 1 / phi],
-        ],
-        dtype=np.float64,
-    )
-
-    # Normalize to lie on sphere
-    lengths = np.linalg.norm(raw_verts, axis=1)
-    verts = raw_verts * (radius / lengths)[:, None]
-
-    # Define the 12 pentagonal faces (indices into verts array)
-    faces = np.array(
-        [
-            [0, 8, 10, 2, 16],
-            [0, 16, 18, 1, 12],
-            [0, 12, 13, 3, 8],
-            [1, 18, 19, 5, 9],
-            [1, 9, 11, 3, 13],
-            [2, 10, 11, 9, 4],
-            [2, 4, 17, 6, 16],
-            [3, 11, 10, 8, 7],
-            [3, 7, 15, 13, 12],
-            [4, 14, 15, 7, 17],
-            [4, 9, 5, 14, 17],
-            [5, 19, 15, 14, 6],
-        ],
-        dtype=int,
-    )
-
-    return verts, faces
 
 
 import math
@@ -294,3 +233,85 @@ def compute_lay_flat_transform(
     T3[2, 3] = -z_face
 
     return T3 @ M
+
+
+@dataclass
+class CylinderSpec:
+    bottom: np.ndarray  # shape (3,)
+    normal: np.ndarray  # shape (3,), must be normalized
+    height: float
+    radius: float
+
+    def __post_init__(self):
+        self.normal = self.normal / np.linalg.norm(self.normal)  # ensure unit
+
+
+def intersect_edge_with_cylinder(p1, p2, cylinder: CylinderSpec, epsilon=1e-8):
+    """
+    Returns the (t1, t2) parameters along the edge p1→p2 where it enters/exits the cylinder.
+    If no intersection, returns None.
+    """
+    from numpy.linalg import norm
+
+    d = p2 - p1  # direction of the edge
+    h = cylinder.normal / norm(cylinder.normal)  # normalized cylinder axis
+    m = p1 - cylinder.bottom
+
+    # Vector components orthogonal to cylinder axis
+    d_perp = d - np.dot(d, h) * h
+    m_perp = m - np.dot(m, h) * h
+
+    A = np.dot(d_perp, d_perp)
+
+    if A < epsilon:
+        # Edge is parallel to axis; check if it's within radius
+        dist_to_axis = np.linalg.norm(m_perp)
+        if dist_to_axis > cylinder.radius + epsilon:
+            return None  # Edge is outside the cylinder
+
+        # Compute t values where edge enters/leaves via height
+        t1 = (0.0 - np.dot(m, h)) / np.dot(d, h)
+        t2 = (cylinder.height - np.dot(m, h)) / np.dot(d, h)
+
+        t_enter = min(t1, t2)
+        t_exit = max(t1, t2)
+
+        if t_exit < 0 or t_enter > 1:
+            return None
+
+        return max(t_enter, 0.0), min(t_exit, 1.0)
+
+    B = 2 * np.dot(d_perp, m_perp)
+    C = np.dot(m_perp, m_perp) - cylinder.radius**2
+
+    discriminant = B**2 - 4 * A * C
+
+    if discriminant < -epsilon:
+        return None  # no real roots, no intersection
+    elif abs(discriminant) <= epsilon:
+        discriminant = 0.0
+
+    sqrt_disc = np.sqrt(discriminant)
+    t1 = (-B - sqrt_disc) / (2 * A)
+    t2 = (-B + sqrt_disc) / (2 * A)
+
+    t_enter = min(t1, t2)
+    t_exit = max(t1, t2)
+
+    # Clamp to edge segment
+    if t_exit < 0 or t_enter > 1:
+        return None
+
+    return max(t_enter, 0.0), min(t_exit, 1.0)
+
+
+def triangle_min_angle(p0, p1, p2):
+    a = np.linalg.norm(p1 - p2)
+    b = np.linalg.norm(p2 - p0)
+    c = np.linalg.norm(p0 - p1)
+    angles = []
+    for x, y, z in [(a, b, c), (b, c, a), (c, a, b)]:
+        cos_angle = np.clip((y**2 + z**2 - x**2) / (2 * y * z), -1.0, 1.0)
+        angle = np.arccos(cos_angle)
+        angles.append(np.degrees(angle))
+    return min(angles)
