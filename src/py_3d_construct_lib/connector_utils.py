@@ -5,9 +5,155 @@ from typing import List
 import networkx as nx
 import numpy as np
 from py_3d_construct_lib.connector_hint import ConnectorHint
-from py_3d_construct_lib.construct_utils import compute_triangle_normal, normalize
+from py_3d_construct_lib.construct_utils import (
+    are_normals_similar,
+    compute_triangle_normal,
+    normalize,
+)
 
 _logger = logging.getLogger(__name__)
+
+
+def merge_collinear_connectors(
+    hints: List[ConnectorHint], angle_tol: float = 1e-3
+) -> List[ConnectorHint]:
+
+    tol = 1e-6
+    original_count = len(hints)
+
+    def get_endpoints(h: ConnectorHint):
+        return h.start_vertex, h.end_vertex
+
+    grouped = defaultdict(list)
+    for h in hints:
+        grouped[(h.region_a, h.region_b)].append(h)
+
+    merged_hints = []
+
+    for (region_a, region_b), group in grouped.items():
+        remaining = list(enumerate(group))
+
+        while remaining:
+            idx, base = remaining.pop(0)
+            base_start, base_end = get_endpoints(base)
+            chain = [(idx, base_start, base_end)]
+
+            progress = True
+
+            while progress:
+                progress = False
+                new_remaining = []
+                for j, hint in remaining:
+                    a, b = get_endpoints(hint)
+                    end_chain_vertex = chain[-1][2]
+                    start_chain_vertex = chain[0][1]
+
+                    # check if the hint is collinear with the chain
+                    is_collinear = np.allclose(
+                        normalize(b - a),
+                        normalize(end_chain_vertex - start_chain_vertex),
+                        atol=tol,
+                    )
+
+                    if np.allclose(end_chain_vertex, a, atol=tol) and is_collinear:
+                        print(f"Found forward match: {j} to {chain[-1][0]}")
+                        if are_normals_similar(
+                            base.triangle_a_normal, hint.triangle_a_normal, angle_tol
+                        ) and are_normals_similar(
+                            base.triangle_b_normal, hint.triangle_b_normal, angle_tol
+                        ):
+
+                            print(f"Appending forward: {j} to {chain[-1][0]}")
+                            chain.append((j, a, b))
+                            progress = True
+                    elif np.allclose(start_chain_vertex, b, atol=tol) and is_collinear:
+                        print(f"Found backward match: {j} to {chain[0][0]}")
+                        if are_normals_similar(
+                            base.triangle_a_normal, hint.triangle_a_normal, angle_tol
+                        ) and are_normals_similar(
+                            base.triangle_b_normal, hint.triangle_b_normal, angle_tol
+                        ):
+
+                            print(f"Prepending forward: {j} to {chain[0][0]}")
+                            chain.insert(0, (j, a, b))
+                            progress = True
+                    else:
+                        new_remaining.append((j, hint))  # keep only unmerged
+                remaining = new_remaining
+
+            if len(chain) == 1:
+                print(f"Found chain of length 1: {chain[0][0]}")
+                merged_hints.append(group[chain[0][0]])
+                continue
+
+            # Build merged hint
+            start = chain[0][1]
+            end = chain[-1][2]
+            edge_vec = normalize(end - start)
+            edge_mid = (start + end) / 2
+
+            if np.allclose(start, end):
+                raise ValueError(
+                    f"Degenerate connector edge in chain (start == end)\n"
+                    f"  region_a = {region_a}, region_b = {region_b}\n"
+                    f"  start = {start}, end = {end}"
+                )
+
+            first_hint = group[chain[0][0]]
+
+            # Get apex vertices by excluding edge from triangle vertex set
+
+            tri_a = np.array(first_hint.triangle_a_vertices)
+
+            for i in range(3):
+                if np.allclose(tri_a[i], first_hint.start_vertex, atol=tol):
+                    tri_a[i] = start
+                elif np.allclose(tri_a[i], first_hint.end_vertex, atol=tol):
+                    tri_a[i] = end
+
+            tri_b = np.array(first_hint.triangle_b_vertices)
+            for i in range(3):
+                if np.allclose(tri_b[i], first_hint.start_vertex, atol=tol):
+                    tri_b[i] = start
+                elif np.allclose(tri_b[i], first_hint.end_vertex, atol=tol):
+                    tri_b[i] = end
+
+            new_hint = ConnectorHint(
+                region_a=first_hint.region_a,
+                region_b=first_hint.region_b,
+                triangle_a_vertices=tri_a,
+                triangle_b_vertices=tri_b,
+                triangle_a_normal=first_hint.triangle_a_normal,
+                triangle_b_normal=first_hint.triangle_b_normal,
+                edge_vector=first_hint.edge_vector,
+                edge_centroid=edge_mid,
+                start_vertex=start,
+                end_vertex=end,
+                face_pair_ids=[
+                    fid
+                    for j, *_ in chain
+                    for fid in getattr(group[j], "face_pair_ids", [])
+                ],
+                original_edges=[
+                    e
+                    for j, *_ in chain
+                    for e in getattr(group[j], "original_edges", [])
+                ],
+            )
+
+            if len(chain) > 1:
+                for chain_member in chain:
+                    current_hint = group[chain_member[0]]
+                    original_edge_vec = (
+                        current_hint.end_vertex - current_hint.start_vertex
+                    )
+
+                    assert np.dot(original_edge_vec, new_hint.edge_vector) > 0
+
+            merged_hints.append(new_hint)
+    print(f"Merged into {len(merged_hints)} connector hints (from {original_count})")
+
+    return merged_hints
 
 
 def compute_connector_hints_from_shell_maps(

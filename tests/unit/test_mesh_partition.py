@@ -3,8 +3,8 @@ from collections import defaultdict
 
 import numpy as np
 from py_3d_construct_lib.connector_hint import ConnectorHint
-from py_3d_construct_lib.construct_utils import create_dodecahedron_geometry
-from py_3d_construct_lib.mesh_partition import merge_collinear_connectors
+from py_3d_construct_lib.connector_utils import merge_collinear_connectors
+from py_3d_construct_lib.construct_utils import create_dodecahedron_geometry, normalize
 from py_3d_construct_lib.partitionable_spheroid_triangle_mesh import (
     PartitionableSpheroidTriangleMesh,
 )
@@ -303,3 +303,117 @@ def test_compute_connector_hints_on_partition():
         print(
             f"Connector: {h.region_a} -> {h.region_b}, edge at {h.edge_centroid}, normal A {h.triangle_a_normal}, normal B {h.triangle_b_normal}"
         )
+
+
+def round_array(arr):
+    arr = np.where(np.abs(arr) < 1e-3, 0.0, arr)  # set near-zero values to zero
+    return np.round(arr, 2)
+
+
+def format_array(arr):
+    return f"np.array({round_array(arr).tolist()})"
+
+
+def test_merge_connector_hints_tetrahedron():
+
+    connector_hints = [
+        ConnectorHint(
+            region_a=0,
+            region_b=1,
+            triangle_a_vertices=(
+                np.array([15.59, -15.16, -15.16]),
+                np.array([-14.72, -15.16, 15.16]),
+                np.array([-14.72, 15.16, -15.16]),
+            ),
+            triangle_b_vertices=(
+                np.array([-14.72, 15.16, -15.16]),
+                np.array([-14.72, -15.16, 15.16]),
+                np.array([15.59, 15.16, 15.16]),
+            ),
+            triangle_a_normal=np.array([-0.58, -0.58, -0.58]),
+            triangle_b_normal=np.array([-0.58, 0.58, 0.58]),
+            edge_vector=np.array([0.0, 0.71, -0.71]),
+            edge_centroid=np.array([-14.72, 0.0, 0.0]),
+            start_vertex=np.array([-14.72, -15.16, 15.16]),
+            end_vertex=np.array([-14.72, 15.16, -15.16]),
+            original_edges=[],
+            face_pair_ids=[],
+        ),
+        ConnectorHint(
+            region_a=0,
+            region_b=1,
+            triangle_a_vertices=(
+                np.array([14.72, -14.07, -14.07]),
+                np.array([14.72, 0.0, 0.0]),
+                np.array([-13.42, -14.07, 14.07]),
+            ),
+            triangle_b_vertices=(
+                np.array([-13.42, -14.07, 14.07]),
+                np.array([14.72, 0.0, 0.0]),
+                np.array([14.72, 14.07, 14.07]),
+            ),
+            triangle_a_normal=np.array([0.58, -0.58, 0.58]),
+            triangle_b_normal=np.array([0.58, -0.58, 0.58]),
+            edge_vector=np.array([-0.82, -0.41, 0.41]),
+            edge_centroid=np.array([0.65, -7.04, 7.04]),
+            start_vertex=np.array([14.72, 0.0, 0.0]),
+            end_vertex=np.array([-13.42, -14.07, 14.07]),
+            original_edges=[],
+            face_pair_ids=[],
+        ),
+        ConnectorHint(
+            region_a=0,
+            region_b=1,
+            triangle_a_vertices=(
+                np.array([14.72, -14.07, -14.07]),
+                np.array([-13.42, 14.07, -14.07]),
+                np.array([14.72, 0.0, 0.0]),
+            ),
+            triangle_b_vertices=(
+                np.array([-13.42, 14.07, -14.07]),
+                np.array([14.72, 14.07, 14.07]),
+                np.array([14.72, 0.0, 0.0]),
+            ),
+            triangle_a_normal=np.array([0.58, 0.58, -0.58]),
+            triangle_b_normal=np.array([0.58, 0.58, -0.58]),
+            edge_vector=np.array([0.82, -0.41, 0.41]),
+            edge_centroid=np.array([0.65, 7.04, -7.04]),
+            start_vertex=np.array([-13.42, 14.07, -14.07]),
+            end_vertex=np.array([14.72, 0.0, 0.0]),
+            original_edges=[],
+            face_pair_ids=[],
+        ),
+    ]
+
+    def simplify_and_print_connector_hints(hints: list[ConnectorHint]):
+        print("[")
+        for i, hint in enumerate(hints):
+            print(
+                f"ConnectorHint(\n    region_a={hint.region_a},\n    region_b={hint.region_b},"
+            )
+            print("    triangle_a_vertices=(")
+            for v in hint.triangle_a_vertices:
+                print(f"        {format_array(v)},")
+            print("    ),")
+            print("    triangle_b_vertices=(")
+            for v in hint.triangle_b_vertices:
+                print(f"        {format_array(v)},")
+            print("    ),")
+            print(
+                f"    triangle_a_normal={format_array(normalize(hint.triangle_a_normal))},"
+            )
+            print(
+                f"    triangle_b_normal={format_array(normalize(hint.triangle_b_normal))},"
+            )
+            print(f"    edge_vector={format_array(normalize(hint.edge_vector))},")
+            print(f"    edge_centroid={format_array(hint.edge_centroid)},")
+            print(f"    start_vertex={format_array(hint.start_vertex)},")
+            print(f"    end_vertex={format_array(hint.end_vertex)},")
+            print(f"    original_edges={hint.original_edges},")
+            print(f"    face_pair_ids={hint.face_pair_ids},\n),\n")
+
+        print("]")
+
+    # simplify_and_print_connector_hints(connector_hints)
+
+    assert len(merge_collinear_connectors(connector_hints)) == 3

@@ -24,6 +24,15 @@ def normalize(v):
     return v / n if n > 0 else v
 
 
+def are_normals_similar(n1: np.ndarray, n2: np.ndarray, tol: float = 1e-3) -> bool:
+    """
+    Checks if two normals are nearly aligned (dot product close to 1.0).
+    """
+    n1 = normalize(n1)
+    n2 = normalize(n2)
+    return np.dot(n1, n2) > 1.0 - tol
+
+
 def fibonacci_sphere(samples=100):
     points = []
     phi = math.pi * (3.0 - math.sqrt(5.0))  # golden angle
