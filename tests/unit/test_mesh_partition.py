@@ -1,6 +1,10 @@
+import json
 import logging
+import os
+import tempfile
 from collections import defaultdict
 
+import matplotlib.pyplot as plt
 import numpy as np
 from py_3d_construct_lib.connector_hint import ConnectorHint
 from py_3d_construct_lib.connector_utils import merge_collinear_connectors
@@ -18,6 +22,32 @@ from py_3d_construct_lib.partitionable_spheroid_triangle_mesh import (
 from py_3d_construct_lib.transformed_region_view import TransformedRegionView
 
 _logger = logging.getLogger(__name__)
+
+
+import matplotlib
+
+matplotlib.use("Agg")  # Use non-interactive backend suitable for pytest
+
+import matplotlib.pyplot as plt
+
+
+def visualize_projected_edges_to_file(
+    edges_2d, filepath: str, title: str = "Boundary Walk"
+):
+    """
+    edges_2d: List of ((x1, y1), (x2, y2)) tuples
+    filepath: Path to write image (e.g., 'test_boundary_walk.png' or .svg)
+    """
+    fig, ax = plt.subplots()
+    for (x1, y1), (x2, y2) in edges_2d:
+        ax.plot([x1, x2], [y1, y2], "k-")
+
+    ax.set_aspect("equal")
+    ax.set_title(title)
+    ax.axis("off")
+
+    fig.savefig(filepath, bbox_inches="tight")
+    plt.close(fig)
 
 
 def test_perforated():
@@ -434,3 +464,83 @@ def test_drill_hole():
     )
 
     assert len(partition.get_regions()) == 4
+
+
+def test_drill_hole_jaggedness():
+
+    sphere_radius = 100
+    mesh = PartitionableSpheroidTriangleMesh.create_fibonacci_sphere_mesh(
+        num_points=40, radius=sphere_radius
+    )
+
+    for i, v in enumerate(mesh.vertices):
+        print(f"Vertex: {i}: {v}")
+
+    new_vertices = []
+
+    partition = MeshPartition(mesh)
+
+    bottom = np.array([0.0, 0.0, -1.0])
+    axis = np.array([0.0, 0.0, 1.0])
+    height = 10000
+    radius = sphere_radius * 0.6
+
+    partition = partition.perforate_and_split_region_by_cylinder(
+        region_id=0,
+        bottom=bottom,
+        axis=axis,
+        height=height,
+        radius=radius,
+    )
+
+    boundary_edges = partition.get_boundary_edges_of_region(0)
+
+    # find the best plane that fits the vertices of the boundary edges
+
+    boundary_points = np.array(
+        [partition.mesh.vertices[e[0]] for e in boundary_edges]
+        + [partition.mesh.vertices[e[1]] for e in boundary_edges]
+    )
+
+    centroid = np.mean(boundary_points, axis=0)
+    cov = np.cov(boundary_points.T)
+    eigvals, eigvecs = np.linalg.eig(cov)
+    normal = eigvecs[:, np.argmin(eigvals)]
+    normal = normalize(normal)
+    print(f"Centroid: {centroid}, Normal: {normal}")
+
+    def orthonormal_basis(normal):
+        if abs(normal[0]) < abs(normal[1]):
+            tangent = np.array([1.0, 0.0, 0.0])
+        else:
+            tangent = np.array([0.0, 1.0, 0.0])
+        u = np.cross(normal, tangent)
+        u = u / np.linalg.norm(u)
+        v = np.cross(normal, u)
+        return u, v
+
+    u, v = orthonormal_basis(normal)
+
+    # Step 2: Map 3D boundary points to 2D in the plane
+    vertex_2d_map = {}
+    for e in boundary_edges:
+        for vi in e:
+            if vi not in vertex_2d_map:
+                vec = partition.mesh.vertices[vi] - centroid
+                x = np.dot(vec, u)
+                y = np.dot(vec, v)
+                vertex_2d_map[vi] = (x, y)
+
+    # Step 3: Build 2D edges
+    projected_2d_edges = [
+        (vertex_2d_map[e[0]], vertex_2d_map[e[1]]) for e in boundary_edges
+    ]
+
+    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmpfile:
+        filename = tmpfile.name
+
+        visualize_projected_edges_to_file(
+            projected_2d_edges, filepath=filename, title="Drill Hole Boundary Walk"
+        )
+
+        print(f"Saved boundary walk visualization to {filename}")

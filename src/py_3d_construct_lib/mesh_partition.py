@@ -73,6 +73,14 @@ class MeshPartition:
             self.face_to_region_map = {i: 0 for i in range(len(mesh.faces))}
         else:
             self.face_to_region_map = face_to_region_map
+
+        for f_idx in range(len(mesh.faces)):
+            if f_idx not in self.face_to_region_map:
+                raise ValueError(
+                    f"Face index {f_idx} is not mapped to any region. "
+                    "Ensure all faces are assigned a region."
+                )
+
         self.boundary_edges = self._compute_boundary_edges()
         self.face_graph = self._build_face_graph()
         self.edge_graph = self._build_edge_graph()
@@ -510,10 +518,11 @@ class MeshPartition:
         print(f"Cap split with {len(initial_faces_A)} vs {len(initial_faces_B)} faces.")
         try:
             walk = self.extract_boundary_walk_between_face_sets(
-                initial_faces_A, initial_faces_B
+                self.mesh, initial_faces_A, initial_faces_B
             )
             print(f"Extracted boundary walk: {walk}")
             tightened_A, tightened_B = self.tighten_boundary_walk(
+                self.mesh,
                 walk,
                 segment_length=4,
                 shorten_factor=0.99,
@@ -871,14 +880,14 @@ class MeshPartition:
 
         return MeshPartition(self.mesh, new_face_to_region)
 
-    def extract_boundary_walk_between_face_sets(self, faces_a, faces_b):
+    @staticmethod
+    def extract_boundary_walk_between_face_sets(mesh, faces_a, faces_b):
         """
         Given two disjoint sets of face indices, extract the boundary walk separating them.
 
         Returns:
             walk: list of ordered edges [(v0, v1), (v1, v2), ...]
         """
-        mesh = self.mesh
         # Collect which face owns which edge
         edge_to_faces = defaultdict(list)
 
@@ -975,8 +984,9 @@ class MeshPartition:
             return path
         return vertex_segment
 
+    @classmethod
     def tighten_boundary_walk(
-        self, walk, allowed_faces, segment_length, shorten_factor
+        cls, mesh, walk, allowed_faces, segment_length, shorten_factor
     ):
         """
         Tightens a walk by replacing segments with shortest paths in the edge graph,
@@ -986,7 +996,6 @@ class MeshPartition:
         Returns:
             (faces_a, faces_b): sets of triangle indices assigned to each side of the walk.
         """
-        mesh = self.mesh
 
         # --- Build edge graph from allowed faces ---
         edge_graph = nx.Graph()
@@ -1045,7 +1054,7 @@ class MeshPartition:
                     shortened_segment = segment
                 else:
 
-                    shortened_segment = self.try_shorten_segment(
+                    shortened_segment = cls.try_shorten_segment(
                         segment, edge_graph, shorten_factor
                     )
 
@@ -1260,10 +1269,11 @@ class MeshPartition:
         # Step 4: Tighten the boundary between them
         try:
             walk = self.extract_boundary_walk_between_face_sets(
-                initial_faces_A, initial_faces_B
+                self.mesh, initial_faces_A, initial_faces_B
             )
             print(f"Extracted boundary walk: {walk}")
             tightened_A, tightened_B = self.tighten_boundary_walk(
+                self.mesh,
                 walk,
                 initial_faces_A | initial_faces_B,
                 segment_length=4,
@@ -1385,6 +1395,51 @@ class MeshPartition:
         min_relative_area=1e-2,
         min_angle_deg=5.0,
     ) -> "MeshPartition":
+
+        def triangle_area_2d(p0, p1, p2):
+            return 0.5 * abs(
+                (p1[0] - p0[0]) * (p2[1] - p0[1]) - (p2[0] - p0[0]) * (p1[1] - p0[1])
+            )
+
+        def select_faces_inside_cylinder_projected_area(
+            mesh,
+            faces_to_consider,
+            bottom,
+            axis,
+            height,
+            radius,
+            epsilon=1e-2,
+            area_slack=0.0,
+        ):
+
+            radius_slack = 0.1
+            # Step 1: Vertex classification
+            axis = axis / np.linalg.norm(axis)
+            inside_vertex_indices = set()
+            for i, v in enumerate(mesh.vertices):
+                vec = v - bottom
+                t = np.dot(vec, axis)
+                if -epsilon <= t <= height + epsilon:
+                    radial = vec - axis * t
+                    if (
+                        np.linalg.norm(radial)
+                        <= radius + epsilon + radius * radius_slack
+                    ):
+                        inside_vertex_indices.add(i)
+
+            # Step 2: Collect candidate triangles
+            candidate_faces = set()
+            full_inside_faces = set()
+            for f_idx in faces_to_consider:
+                verts = mesh.faces[f_idx]
+                verts_set = set(verts)
+                if verts_set <= inside_vertex_indices:
+                    full_inside_faces.add(f_idx)
+                elif verts_set & inside_vertex_indices:
+                    candidate_faces.add(f_idx)
+
+            return full_inside_faces
+
         region_faces = [
             idx for idx, r in self.face_to_region_map.items() if r == region_id
         ]
@@ -1404,25 +1459,36 @@ class MeshPartition:
         max_region_id = max(self.face_to_region_map.values())
         new_region_id = max_region_id + 1
 
+        all_new_faces = set()
+        for face_list in face_index_map.values():
+            all_new_faces.update(face_list)
+
+        # add all faces in the region that were not perforated
+        all_new_faces.update(
+            idx for idx, r in self.face_to_region_map.items() if r == region_id
+        )
+
+        selected_faces = select_faces_inside_cylinder_projected_area(
+            mesh=new_mesh,
+            faces_to_consider=all_new_faces,
+            bottom=bottom,
+            axis=axis,
+            height=height,
+            radius=radius,
+            epsilon=epsilon,
+            area_slack=0.0,
+        )
+
         for old_face_idx, new_face_indices in face_index_map.items():
             old_region = self.face_to_region_map[old_face_idx]
-            if old_region != region_id:
-                for new_face in new_face_indices:
-                    new_face_to_region[new_face] = old_region
-                continue
-
-            # classify by all-vertices-inside
             for new_face in new_face_indices:
-                face = new_mesh.faces[new_face]
-                vertices = new_mesh.vertices[face]
-
-                if all(
-                    point_inside_cylinder(v, bottom, axis, height, radius, epsilon)
-                    for v in vertices
-                ):
+                if old_region != region_id:
+                    new_face_to_region[new_face] = old_region
+                elif new_face in selected_faces:
                     new_face_to_region[new_face] = new_region_id
                 else:
                     new_face_to_region[new_face] = region_id
+
         return MeshPartition(new_mesh, new_face_to_region)
 
     def find_regions_of_vertex_by_index(self, vertex_index: int) -> List[int]:
