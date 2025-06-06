@@ -8,8 +8,10 @@ from py_3d_construct_lib.construct_utils import normalize
 from py_3d_construct_lib.geometries import (
     create_cube_geometry,
     create_dodecahedron_geometry,
+    create_fibonacci_sphere_geometry,
     create_tetrahedron_geometry,
 )
+from py_3d_construct_lib.mesh_partition import MeshPartition
 from py_3d_construct_lib.partitionable_spheroid_triangle_mesh import (
     PartitionableSpheroidTriangleMesh,
 )
@@ -23,7 +25,7 @@ def test_perforated():
 
     # Step 1: Create the initial mesh and trivial partition (one region)
     mesh = PartitionableSpheroidTriangleMesh.from_point_cloud(points)
-    partition = mesh.get_trivial_partition()
+    partition = MeshPartition(mesh)
 
     # Step 2: Define a plane (cut through origin, normal in x-direction)
     plane_point = np.array([0.0, 0.0, 0.0])
@@ -283,7 +285,7 @@ def test_compute_connector_hints_on_partition():
     # Create initial mesh
     points, _ = create_dodecahedron_geometry(1.0)
     mesh = PartitionableSpheroidTriangleMesh.from_point_cloud(points)
-    partition = mesh.get_trivial_partition()
+    partition = MeshPartition(mesh)
 
     # Perforate and split to create two regions
     plane_point = np.array([0.0, 0.0, 0.0])
@@ -391,3 +393,44 @@ def test_merge_connector_hints_tetrahedron():
     ]
 
     assert len(merge_collinear_connectors(connector_hints)) == 3
+
+
+def test_drill_hole():
+
+    points, vertices = create_fibonacci_sphere_geometry(1.0, 50)
+
+    vertex_labels = [str(i) for i in range(len(points))]
+
+    vertex_labels[0] = "drill_here"
+    vertex_labels[len(points) // 2] = "drill_here"
+
+    mesh = PartitionableSpheroidTriangleMesh(
+        points, vertices, vertex_labels=vertex_labels
+    )
+
+    partition = MeshPartition(mesh)
+
+    # find plane to cut through the sphere
+
+    drill_vertex_indices = partition.mesh.get_vertices_by_label("drill_here")
+
+    assert len(drill_vertex_indices) == 2, "Expected exactly two drill points"
+
+    drill_points = partition.mesh.vertices[drill_vertex_indices]
+
+    cut_center = np.mean(drill_points, axis=0)
+
+    cut_normal = normalize(drill_points[1] - drill_points[0])
+
+    partition = partition.perforate_and_split_region_by_plane(
+        region_id=0,
+        plane_point=cut_center,
+        plane_normal=cut_normal,
+    )
+
+    partition = partition.drill_holes_by_label(
+        "drill_here",
+        radius=0.3,
+    )
+
+    assert len(partition.get_regions()) == 4

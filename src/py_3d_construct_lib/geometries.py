@@ -1,4 +1,7 @@
+import math
+
 import numpy as np
+from scipy.spatial import ConvexHull
 
 
 def create_icosahedron_geometry(radius=1.0):
@@ -197,5 +200,45 @@ def create_tetrahedron_geometry(radius=1.0):
         ],
         dtype=int,
     )
+
+    return verts, faces
+
+
+def create_fibonacci_sphere_geometry(radius=1.0, samples=100):
+    """
+    Returns:
+        verts: (N, 3) array of points evenly distributed on a sphere of given radius
+        faces: (M, 3) array of triangle indices forming a convex hull with outward-pointing normals
+    """
+    phi = math.pi * (3.0 - math.sqrt(5.0))  # golden angle
+
+    points = []
+    for i in range(samples):
+        y = 1 - (i / float(samples - 1)) * 2  # y from 1 to -1
+        r = math.sqrt(1 - y * y)
+        theta = phi * i
+        x = math.cos(theta) * r
+        z = math.sin(theta) * r
+        points.append([x, y, z])
+
+    points = np.array(points) * radius
+    hull = ConvexHull(points)
+
+    verts = points
+    faces = []
+
+    sphere_center = np.mean(points, axis=0)  # should be near (0, 0, 0)
+
+    for simplex in hull.simplices:
+        a, b, c = verts[simplex[0]], verts[simplex[1]], verts[simplex[2]]
+        normal = np.cross(b - a, c - a)
+        face_center = (a + b + c) / 3
+        if np.dot(normal, face_center - sphere_center) < 0:
+            # Flip face to make it outward-facing
+            faces.append([simplex[0], simplex[2], simplex[1]])
+        else:
+            faces.append([simplex[0], simplex[1], simplex[2]])
+
+    faces = np.array(faces, dtype=int)
 
     return verts, faces

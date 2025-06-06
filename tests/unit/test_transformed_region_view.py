@@ -7,6 +7,7 @@ from py_3d_construct_lib.geometries import (
     create_dodecahedron_geometry,
     create_tetrahedron_geometry,
 )
+from py_3d_construct_lib.mesh_partition import MeshPartition
 from py_3d_construct_lib.partitionable_spheroid_triangle_mesh import (
     PartitionableSpheroidTriangleMesh,
 )
@@ -23,7 +24,7 @@ def test_transformed_shell_map():
 
     # Step 2: Create and partition the mesh
     mesh = PartitionableSpheroidTriangleMesh.from_point_cloud(points)
-    partition = mesh.get_trivial_partition()
+    partition = MeshPartition(mesh)
 
     # Step 3: Perforate and split into two regions
     partition = partition.perforate_and_split_region_by_plane(
@@ -67,7 +68,7 @@ def test_compute_connector_hints_on_transformed_region_view():
     # Step 2: Create mesh object
     mesh = PartitionableSpheroidTriangleMesh.from_point_cloud(points)
 
-    partition = mesh.get_trivial_partition()
+    partition = MeshPartition(mesh)
 
     partition = partition.perforate_and_split_region_by_plane(
         0, np.array([0, 0, 0]), np.array([0, 0, 1])
@@ -107,7 +108,7 @@ def test_compute_connector_hints_merge_tetrahedron():
     # Step 2: Create mesh object
     mesh = PartitionableSpheroidTriangleMesh.from_point_cloud(points)
 
-    partition = mesh.get_trivial_partition()
+    partition = MeshPartition(mesh)
 
     partition = partition.perforate_and_split_region_by_plane(
         0, plane_point=np.array([0, 0, 0]), plane_normal=np.array([0, 1, 1])
@@ -169,7 +170,7 @@ def test_lay_flat_optimal():
     # Step 2: Create mesh object
     mesh = PartitionableSpheroidTriangleMesh.from_point_cloud(points)
 
-    partition = mesh.get_trivial_partition()
+    partition = MeshPartition(mesh)
 
     partition = partition.perforate_and_split_region_by_plane(
         0, plane_point=np.array([0, 0, 0]), plane_normal=np.array([0, 1, 1])
@@ -206,7 +207,7 @@ def test_lay_flat_on_edge():
     # Step 2: Create mesh object
     mesh = PartitionableSpheroidTriangleMesh.from_point_cloud(points)
 
-    partition = mesh.get_trivial_partition()
+    partition = MeshPartition(mesh)
 
     partition = partition.perforate_and_split_region_by_plane(
         region_id=0,
@@ -283,7 +284,7 @@ def test_numerical_instability():
     for f in sorted([tuple(f) for f in mesh.faces]):
         print(f"Mesh face: {f}")
 
-    partition = mesh.get_trivial_partition()
+    partition = MeshPartition(mesh)
 
     partition = partition.perforate_and_split_region_by_plane(
         region_id=0,

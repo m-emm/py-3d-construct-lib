@@ -13,6 +13,7 @@ from py_3d_construct_lib.geometries import (
     create_cube_geometry,
     create_dodecahedron_geometry,
 )
+from py_3d_construct_lib.mesh_partition import MeshPartition
 from py_3d_construct_lib.partitionable_spheroid_triangle_mesh import (
     PartitionableSpheroidTriangleMesh,
 )
@@ -27,7 +28,7 @@ def test_split_region_by_cap():
         num_points=100, radius=10
     )
 
-    partition_0 = mesh.get_trivial_partition()
+    partition_0 = MeshPartition(mesh)
 
     partition = partition_0.split_region_by_cap(
         0, initial_seed_triangle_index=0, target_area_fraction=0.4
@@ -40,7 +41,7 @@ def test_split_region_by_polar_oriented_plane():
         num_points=100, radius=10
     )
 
-    partition = mesh.get_trivial_partition()
+    partition = MeshPartition(mesh)
 
     partition_2 = partition.split_region_by_polar_oriented_plane(
         region_id=0, target_area_fraction=0.5, phi=np.pi / 4
@@ -53,7 +54,7 @@ def test_split_twice():
         num_points=100, radius=10
     )
 
-    partition_0 = mesh.get_trivial_partition()
+    partition_0 = MeshPartition(mesh)
 
     partition = partition_0.split_region_by_cap(
         0, initial_seed_triangle_index=0, target_area_fraction=0.4
@@ -72,7 +73,7 @@ def test_split_top_bottom_caps():
         num_points=100, radius=10
     )
 
-    partition_0 = mesh.get_trivial_partition()
+    partition_0 = MeshPartition(mesh)
 
     trv = TransformedRegionView(partition_0, region_id=0)
 

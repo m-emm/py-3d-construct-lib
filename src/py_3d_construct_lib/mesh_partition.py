@@ -16,6 +16,9 @@ from py_3d_construct_lib.construct_utils import (
     fibonacci_sphere,
     normalize,
 )
+from py_3d_construct_lib.partitionable_spheroid_triangle_mesh import (
+    PartitionableSpheroidTriangleMesh,
+)
 from py_3d_construct_lib.spherical_tools import (
     cartesian_to_spherical_jackson,
     rotation_matrix_from_vectors,
@@ -60,9 +63,16 @@ def are_collinear(
 
 class MeshPartition:
 
-    def __init__(self, mesh, face_to_region_map):
+    def __init__(
+        self, mesh: PartitionableSpheroidTriangleMesh, face_to_region_map=None
+    ):
+
         self.mesh = mesh
-        self.face_to_region_map = face_to_region_map
+        if face_to_region_map is None:
+            # Trivial partition: all faces in region 0
+            self.face_to_region_map = {i: 0 for i in range(len(mesh.faces))}
+        else:
+            self.face_to_region_map = face_to_region_map
         self.boundary_edges = self._compute_boundary_edges()
         self.face_graph = self._build_face_graph()
         self.edge_graph = self._build_edge_graph()
@@ -318,6 +328,21 @@ class MeshPartition:
         return sum(
             self.mesh.triangle_area(self.mesh.faces[face]) for face in faces_of_region
         )
+
+    def find_regions_of_vertex_by_label(self, vertex_label: str) -> List[int]:
+        """
+        Returns a list of region IDs that contain the vertex with the given label.
+        """
+        regions = set()
+        vertex_indices = self.mesh.get_vertices_by_label(vertex_label)
+
+        # Check all faces to see if this vertex is part of them
+        for face_index, region in self.face_to_region_map.items():
+            face = self.mesh.faces[face_index]
+            if any(v in vertex_indices for v in face):
+                regions.add(region)
+
+        return sorted(regions)
 
     def compute_connector_hints(
         self, shell_thickness, merge_connectors=False
@@ -1400,24 +1425,42 @@ class MeshPartition:
                     new_face_to_region[new_face] = region_id
         return MeshPartition(new_mesh, new_face_to_region)
 
-    def drill_hole(
+    def find_regions_of_vertex_by_index(self, vertex_index: int) -> List[int]:
+        """
+        Find all regions that contain a specific vertex by its index.
+
+        Parameters
+        ----------
+        vertex_index : int
+            The index of the vertex to search for.
+
+        Returns
+        -------
+        List[int]
+            A list of region IDs that contain the specified vertex.
+        """
+        regions = set()
+        for face_idx, region_id in self.face_to_region_map.items():
+            if vertex_index in self.mesh.faces[face_idx]:
+                regions.add(region_id)
+        return sorted(regions)
+
+    def drill_holes_by_label(
         self,
-        region_id: int,
         center_vertex_label: str,
         radius: float,
         height: float = 1000.0,
         epsilon: float = 1e-8,
         min_relative_area=1e-2,
         min_angle_deg=5.0,
+        explicit_vertex_index: Optional[int] = None,
     ) -> "MeshPartition":
         """
-        Drill a cylindrical hole in the specified region by removing faces within a certain radius
-        from the center vertex, along the averaged local normal.
+        Drill a cylindrical hole in all regions by removing faces within a certain radius
+        from the center vertices, which are given by label, along the averaged local normal.
 
         Parameters
         ----------
-        region_id : int
-            The ID of the region to drill a hole in.
         center_vertex_label : str
             The label of the vertex at the center of the hole.
         radius : float
@@ -1432,52 +1475,70 @@ class MeshPartition:
         MeshPartition
             A new mesh partition with the hole drilled (split into two regions).
         """
-        # Step 1: Find the vertex
+        # Step 1: Find the regions which contain any of the vertices with the given label
+        if explicit_vertex_index is not None:
+            regions = self.find_regions_of_vertex_by_index(explicit_vertex_index)
+        else:
+            regions = self.find_regions_of_vertex_by_label(center_vertex_label)
+
+        if not regions:
+            raise ValueError(
+                f"No regions found containing vertices with label '{center_vertex_label}'"
+            )
+
+        current_partition = self
+
         vertex_indices = self.mesh.get_vertices_by_label(center_vertex_label)
-        if not vertex_indices:
-            raise ValueError(f"No vertex found with label '{center_vertex_label}'")
 
         for center_idx in vertex_indices:
-            print(
-                f"Drilling hole at vertex index {center_idx} with label '{center_vertex_label}'"
-            )
-            center_point = self.mesh.vertices[center_idx]
 
-            # Step 2: Find adjacent faces in the region
-            adjacent_faces = [
-                idx
-                for idx, face in enumerate(self.mesh.faces)
-                if center_idx in face and self.face_to_region_map.get(idx) == region_id
-            ]
-            if not adjacent_faces:
+            regions = self.find_regions_of_vertex_by_index(center_idx)
+
+            for region_id in regions:
                 print(
-                    f"No adjacent faces found for vertex {center_idx} in region {region_id}."
+                    f"Drilling hole at vertex index {center_idx} with label '{center_vertex_label}' into region {region_id}."
                 )
-                continue
-            # Step 3: Compute average normal from adjacent faces
-            normals = []
-            for face_idx in adjacent_faces:
-                v0, v1, v2 = self.mesh.vertices[self.mesh.faces[face_idx]]
-                normal = np.cross(v1 - v0, v2 - v0)
-                normals.append(normalize(normal))
-            avg_normal = normalize(np.mean(normals, axis=0))
+                center_point = self.mesh.vertices[center_idx]
 
-            # Step 4: Build the drilling cylinder
-            axis_start = center_point - 0.5 * height * avg_normal
-            axis_end = center_point + 0.5 * height * avg_normal
+                # Step 2: Find adjacent faces in the region
+                adjacent_faces = [
+                    idx
+                    for idx, face in enumerate(self.mesh.faces)
+                    if center_idx in face
+                    and self.face_to_region_map.get(idx) == region_id
+                ]
+                if not adjacent_faces:
+                    print(
+                        f"No adjacent faces found for vertex {center_idx} in region {region_id}."
+                    )
+                    continue
+                # Step 3: Compute average normal from adjacent faces
+                normals = []
+                for face_idx in adjacent_faces:
+                    v0, v1, v2 = self.mesh.vertices[self.mesh.faces[face_idx]]
+                    normal = np.cross(v1 - v0, v2 - v0)
+                    normals.append(normalize(normal))
+                avg_normal = normalize(np.mean(normals, axis=0))
 
-            # Step 5: Perforate and split region by cylinder
-            return self.perforate_and_split_region_by_cylinder(
-                region_id=region_id,
-                bottom=axis_start,
-                axis=avg_normal,
-                height=height,
-                radius=radius,
-                epsilon=epsilon,
-                min_relative_area=min_relative_area,
-                min_angle_deg=min_angle_deg,
-            )
+                # Step 4: Build the drilling cylinder
+                axis_start = center_point - 0.5 * height * avg_normal
 
-        raise ValueError(
-            f"No valid vertex found with label '{center_vertex_label}' in region {region_id}."
-        )
+                # Step 5: Perforate and split region by cylinder
+                current_partition = (
+                    current_partition.perforate_and_split_region_by_cylinder(
+                        region_id=region_id,
+                        bottom=axis_start,
+                        axis=avg_normal,
+                        height=height,
+                        radius=radius,
+                        epsilon=epsilon,
+                        min_relative_area=min_relative_area,
+                        min_angle_deg=min_angle_deg,
+                    )
+                )
+
+                print(
+                    f"Current partition has now {len(current_partition.get_regions())} regions."
+                )
+
+        return current_partition

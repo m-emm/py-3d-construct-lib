@@ -16,7 +16,6 @@ from py_3d_construct_lib.construct_utils import (
     triangle_edges,
     triangle_min_angle,
 )
-from py_3d_construct_lib.mesh_partition import MeshPartition
 from py_3d_construct_lib.spherical_tools import (
     cartesian_to_spherical_jackson,
     spherical_to_cartesian_jackson,
@@ -565,14 +564,6 @@ class PartitionableSpheroidTriangleMesh:
         points = np.array(points)
 
         return cls.from_point_cloud(points)
-
-    def get_trivial_partition(self):
-        """
-        Returns a trivial partition of the mesh, where all faces are in the same region.
-        This is usefule to then further partition the mesh using the methods of the MeshPartition class.
-        """
-        face_to_region_map = {i: 0 for i in range(len(self.faces))}
-        return MeshPartition(self, face_to_region_map)
 
     def add_vertex_in_face(self, face_index, barycentric_coords):
         """
