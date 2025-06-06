@@ -315,3 +315,20 @@ def triangle_min_angle(p0, p1, p2):
         angle = np.arccos(cos_angle)
         angles.append(np.degrees(angle))
     return min(angles)
+
+
+def compute_out_vector(normal, triangle, edge_centroid, edge_vector):
+    # Compute triangle centroid
+    tri_vertices = [np.array(v) for v in triangle]
+    tri_centroid = sum(tri_vertices) / 3.0
+
+    # Initial out vector
+    out = np.cross(edge_vector, normal)
+    if np.linalg.norm(out) < 1e-6:
+        raise ValueError("Degenerate orientation: edge_vector and normal are parallel")
+
+    # Ensure it points from edge_centroid toward triangle centroid
+    to_centroid = tri_centroid - edge_centroid
+    if np.dot(out, to_centroid) < 0:
+        out = -out
+    return out

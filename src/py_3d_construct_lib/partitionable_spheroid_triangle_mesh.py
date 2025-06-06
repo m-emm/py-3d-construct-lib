@@ -24,6 +24,7 @@ from py_3d_construct_lib.spherical_tools import (
 from scipy.spatial import ConvexHull
 
 _logger = logging.getLogger(__name__)
+AREA_FRACTION_LIMIT = 1e-6
 
 
 @dataclass
@@ -174,10 +175,10 @@ class PartitionableSpheroidTriangleMesh:
 
         # check for degenerate triangles
 
-        characteristic_leghth = np.max(np.linalg.norm(self.vertices, axis=1))
+        characteristic_length = np.max(np.linalg.norm(self.vertices, axis=1))
         for face in self.faces:
             area = triangle_area(*self.vertices[face])
-            if area < 1e-6 * characteristic_leghth**2:
+            if area < AREA_FRACTION_LIMIT * characteristic_length**2:
                 raise ValueError(
                     f"Degenerate triangle with area {area:.6f} detected in face {face}. "
                     "Ensure that the mesh is well-formed and triangles are not too small."
@@ -769,8 +770,10 @@ class PartitionableSpheroidTriangleMesh:
 
                 area = triangle_area(*V_new[t])
                 characteristic_length = np.max(np.linalg.norm(V_new, axis=1))
-                if area < 1e-6 * characteristic_length**2:
-                    raise ValueError(f"Degenerate triangle in face {orig_index}.")
+                if area < AREA_FRACTION_LIMIT * characteristic_length**2:
+                    raise ValueError(
+                        f"Degenerate triangle in face {orig_index}, area: {area}, characteristic_length: {characteristic_length}, vertices: {V_new[t]}"
+                    )
 
             face_index_mapping[orig_index] = new_face_indices
 
