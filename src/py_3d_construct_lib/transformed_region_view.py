@@ -122,7 +122,7 @@ class TransformedRegionView:
         return V_transformed, F, E
 
     def get_transformed_materialized_shell_maps(
-        self, shell_thickness, shrinkage=0, shrink_border=0
+        self, shell_thickness, shrinkage=0, shrink_border=0, smooth_inside=False
     ):
         """
         Return a dict of shell maps (face_id -> vertex/face map),
@@ -133,6 +133,7 @@ class TransformedRegionView:
                 shell_thickness=shell_thickness,
                 shrinkage=shrinkage,
                 shrink_border=shrink_border,
+                smooth_inside=smooth_inside,
             )
         )
         region_faces = self.partition.get_faces_of_region(self.region_id)

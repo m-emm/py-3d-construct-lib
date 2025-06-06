@@ -130,10 +130,9 @@ def create_dodecahedron_geometry(radius=1.0):
 def create_cube_geometry(radius=1.0):
     """
     Returns:
-      verts: (8,3) numpy array of vertex coordinates on sphere of given radius
-      faces: (12,3) numpy array of triangle indices (2 per face, 6 faces)
+        verts: (8,3) numpy array — vertices on a sphere of given radius
+        faces: (12,3) numpy array — triangles with outward-facing normals
     """
-    # 8 cube corners
     raw_verts = np.array(
         [
             [-1, -1, -1],  # 0
@@ -148,24 +147,22 @@ def create_cube_geometry(radius=1.0):
         dtype=np.float64,
     )
 
-    # normalize to radius
     verts = raw_verts / np.linalg.norm(raw_verts, axis=1)[:, None] * radius
 
-    # triangles per face (CCW outward)
     faces = np.array(
         [
-            [0, 1, 2],
-            [0, 2, 3],  # bottom (-Z)
-            [4, 6, 5],
-            [4, 7, 6],  # top (+Z)
-            [0, 4, 5],
-            [0, 5, 1],  # front (-Y)
-            [1, 5, 6],
-            [1, 6, 2],  # right (+X)
-            [2, 6, 7],
-            [2, 7, 3],  # back (+Y)
-            [3, 7, 4],
-            [3, 4, 0],  # left (-X)
+            [0, 2, 1],
+            [0, 3, 2],  # bottom (-Z)
+            [4, 5, 6],
+            [4, 6, 7],  # top    (+Z)
+            [0, 1, 5],
+            [0, 5, 4],  # front  (-Y)
+            [2, 3, 7],
+            [2, 7, 6],  # back   (+Y)
+            [1, 2, 6],
+            [1, 6, 5],  # right  (+X)
+            [3, 0, 4],
+            [3, 4, 7],  # left   (-X)
         ],
         dtype=int,
     )
@@ -176,29 +173,27 @@ def create_cube_geometry(radius=1.0):
 def create_tetrahedron_geometry(radius=1.0):
     """
     Returns:
-      verts: (4,3) numpy array of vertex coordinates on sphere of given radius
-      faces: (4,3) numpy array of triangle indices (all faces)
+        verts: (4,3) numpy array of vertex coordinates on sphere of given radius
+        faces: (4,3) numpy array of triangle indices with outward normals
     """
-    # Regular tetrahedron centered at origin
     raw_verts = np.array(
         [
-            [1, 1, 1],
-            [-1, -1, 1],
-            [-1, 1, -1],
-            [1, -1, -1],
+            [1, 1, 1],  # 0
+            [-1, -1, 1],  # 1
+            [-1, 1, -1],  # 2
+            [1, -1, -1],  # 3
         ],
         dtype=np.float64,
     )
 
-    # normalize to sphere
     verts = raw_verts / np.linalg.norm(raw_verts, axis=1)[:, None] * radius
 
     faces = np.array(
         [
-            [0, 1, 2],
-            [0, 3, 1],
-            [0, 2, 3],
-            [1, 3, 2],
+            [0, 2, 1],  # base face (bottom)
+            [0, 1, 3],  # side face
+            [0, 3, 2],  # side face
+            [1, 2, 3],  # back face
         ],
         dtype=int,
     )

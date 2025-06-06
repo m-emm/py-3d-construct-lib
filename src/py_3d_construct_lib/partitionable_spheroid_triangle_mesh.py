@@ -50,15 +50,16 @@ def propagate_consistent_winding(triangles):
     edge_to_tri = calc_edge_to_triangle_map(triangles)
 
     visited = set()
-    queue = deque([0])  # start with triangle 0
+    queue = deque([0])  # Start with triangle 0
     visited.add(0)
 
     while queue:
         current = queue.popleft()
         current_tri = triangles[current]
 
-        for edge in triangle_edges(current_tri):
-            edge_key = normalize_edge(*edge)
+        for i in range(3):
+            a, b = current_tri[i], current_tri[(i + 1) % 3]
+            edge_key = normalize_edge(a, b)
             neighbors = edge_to_tri[edge_key]
 
             for neighbor in neighbors:
@@ -67,12 +68,15 @@ def propagate_consistent_winding(triangles):
 
                 neighbor_tri = triangles[neighbor]
 
-                # Check how this edge appears in neighbor
-                if edge in triangle_edges(neighbor_tri):
-                    # Same direction: flip neighbor
-                    triangles[neighbor] = neighbor_tri[::-1]
+                # Find how this edge appears in neighbor
+                for j in range(3):
+                    na, nb = neighbor_tri[j], neighbor_tri[(j + 1) % 3]
+                    if {a, b} == {na, nb}:
+                        if (a, b) == (na, nb):
+                            # Same direction: flip neighbor
+                            triangles[neighbor] = neighbor_tri[::-1]
+                        break
 
-                # Mark visited and continue
                 visited.add(neighbor)
                 queue.append(neighbor)
 
@@ -136,8 +140,18 @@ def shrink_triangle(A, B, C, border_width, epsilon=1e-6):
 
 class PartitionableSpheroidTriangleMesh:
     def __init__(self, vertices, faces, vertex_labels=None):
-        self.vertices = np.array(vertices)
+        self.vertices = np.array(vertices, dtype=np.float64)
         self.faces = np.array(faces)
+
+        corrected_faces = propagate_consistent_winding(self.faces)
+
+        if not np.array_equal(corrected_faces, self.faces):
+            _logger.warning(
+                "Faces were not consistently wound. Correcting to ensure outward normals."
+            )
+            self.faces = corrected_faces
+        else:
+            _logger.info("Faces are consistently wound.")
 
         for face in self.faces:
             assert len(face) == 3, "All faces must be triangles"
@@ -184,6 +198,25 @@ class PartitionableSpheroidTriangleMesh:
                     "Ensure that the mesh is well-formed and triangles are not too small."
                 )
 
+        center = np.mean(self.vertices, axis=0, dtype=np.float64)
+
+        for i, face in enumerate(self.faces):
+            v0, v1, v2 = self.vertices[face]
+            normal = np.cross(v1 - v0, v2 - v0)
+            if np.linalg.norm(normal) == 0:
+                raise ValueError(f"Degenerate face at index {i}")
+            normal /= np.linalg.norm(normal)
+
+            face_centroid = (v0 + v1 + v2) / 3
+            to_center = center - face_centroid
+
+            # If the normal points toward the center, the face is inverted
+            if np.dot(normal, to_center) > 0:
+                raise ValueError(
+                    f"Face {i} has inward-facing normal. "
+                    "Ensure consistent vertex winding so normals point outward."
+                )
+
     def get_vertex_triangles(self, vertex_index):
         """
         Returns a list of triangle indices that contain the given vertex.
@@ -213,8 +246,31 @@ class PartitionableSpheroidTriangleMesh:
     def total_area(self):
         return sum(self.triangle_area(face) for face in self.faces)
 
+    @staticmethod
+    def smooth_inner_vertices(shell_maps, vertex_index_map):
+        # Step 1: Map from original vertex index → list of (face_index, local_vertex_id)
+        vertex_to_inner_locations = defaultdict(list)
+        for face_index, vmap in vertex_index_map.items():
+            for orig_idx, local_idx in vmap["inner"].items():
+                vertex_to_inner_locations[orig_idx].append((face_index, local_idx))
+
+        # Step 2: Compute average positions
+        averaged_positions = {}
+        for orig_idx, locations in vertex_to_inner_locations.items():
+            positions = [
+                shell_maps[face_index]["vertexes"][local_idx]
+                for (face_index, local_idx) in locations
+            ]
+            averaged_positions[orig_idx] = np.mean(positions, axis=0)
+
+        # Step 3: Set all inner vertices to the averaged position
+        for orig_idx, locations in vertex_to_inner_locations.items():
+            avg_pos = averaged_positions[orig_idx]
+            for face_index, local_idx in locations:
+                shell_maps[face_index]["vertexes"][local_idx] = avg_pos
+
     def calculate_materialized_shell_maps(
-        self, shell_thickness, shrinkage=0, shrink_border=0
+        self, shell_thickness, shrinkage=0, shrink_border=0, smooth_inside=False
     ):
         """
         Calculate materialized shell triangle prisms per face,
@@ -257,6 +313,9 @@ class PartitionableSpheroidTriangleMesh:
                 "inner": {original_indices[i]: i for i in range(3)},
                 "outer": {original_indices[i]: i + 3 for i in range(3)},
             }
+
+        if smooth_inside:
+            self.smooth_inner_vertices(shell_maps, vertex_index_map)
 
         return shell_maps, vertex_index_map
 
