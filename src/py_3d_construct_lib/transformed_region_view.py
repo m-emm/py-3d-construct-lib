@@ -7,6 +7,7 @@ from py_3d_construct_lib.connector_utils import transform_connector_hint
 from py_3d_construct_lib.construct_utils import (
     compute_lay_flat_transform,
     fibonacci_sphere,
+    is_valid_rigid_transform,
     normalize,
     triangle_area,
 )
@@ -23,6 +24,7 @@ class TransformedRegionView:
         self.partition = partition
         self.region_id = region_id
         self.transform = transform if transform is not None else np.eye(4)
+        assert is_valid_rigid_transform(self.transform), "Transform is not rigid!"
 
     def apply_transform(self, mat4x4: np.ndarray):
         """Returns a new view with the composed transformation applied."""
@@ -373,6 +375,8 @@ class TransformedRegionView:
         for v in to_flatten_transformed:
             if not np.isclose(v[2], 0, atol=1e-5):
                 print(f"WARNING: vertex not flat: {v}")
+
+        assert is_valid_rigid_transform(A), "Computed transform is not valid!"
 
         new_view = self.apply_transform(A)
         return new_view

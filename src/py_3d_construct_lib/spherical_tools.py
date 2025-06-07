@@ -238,16 +238,44 @@ def cartesian_to_spherical(xyz):
     return np.stack([theta, phi], axis=1)
 
 
-def rotation_matrix_from_vectors(a, b):
+def rotation_matrix_from_vectors(a: np.ndarray, b: np.ndarray) -> np.ndarray:
+    """
+    Computes the rotation matrix that rotates vector `a` to vector `b`.
+    Both a and b must be normalized.
+    """
     a = a / np.linalg.norm(a)
     b = b / np.linalg.norm(b)
+
     v = np.cross(a, b)
     c = np.dot(a, b)
     s = np.linalg.norm(v)
-    if s == 0:
-        return np.eye(3) if c > 0 else -np.eye(3)
+
+    if s < 1e-8:
+        if c > 0:
+            return np.eye(3)  # No rotation needed
+        else:
+            # 180° rotation around any axis perpendicular to a
+            # Find a vector orthogonal to a
+            if abs(a[0]) < abs(a[1]):
+                ortho = np.array([1, 0, 0])
+            else:
+                ortho = np.array([0, 1, 0])
+            axis = np.cross(a, ortho)
+            axis = axis / np.linalg.norm(axis)
+
+            x, y, z = axis
+            R = np.array(
+                [
+                    [1 - 2 * y * y - 2 * z * z, 2 * x * y, 2 * x * z],
+                    [2 * x * y, 1 - 2 * x * x - 2 * z * z, 2 * y * z],
+                    [2 * x * z, 2 * y * z, 1 - 2 * x * x - 2 * y * y],
+                ]
+            )
+            return R
+
+    # General case: Rodrigues' rotation formula
     kmat = np.array([[0, -v[2], v[1]], [v[2], 0, -v[0]], [-v[1], v[0], 0]])
-    R = np.eye(3) + kmat + (kmat @ kmat) * ((1 - c) / (s**2))
+    R = np.eye(3) + kmat + kmat @ kmat * ((1 - c) / (s**2))
     return R
 
 

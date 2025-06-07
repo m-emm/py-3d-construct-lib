@@ -1,9 +1,36 @@
 import math
+from collections import Counter
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 import numpy as np
 from py_3d_construct_lib.spherical_tools import rotation_matrix_from_vectors
+
+
+def is_valid_rigid_transform(T: np.ndarray, tol=1e-6) -> bool:
+    """
+    Checks if a 4x4 transformation matrix is a valid rigid-body transform
+    (no scaling, no mirroring, no shear).
+
+    Returns True if the transform preserves orientation and lengths.
+    """
+    if T.shape != (4, 4):
+        raise ValueError("Expected a 4x4 transformation matrix")
+
+    R = T[:3, :3]
+    should_be_identity = R.T @ R
+    identity = np.eye(3)
+
+    # Check orthonormality
+    if not np.allclose(should_be_identity, identity, atol=tol):
+        return False
+
+    # Check determinant (should be +1 for rotation, -1 means mirroring)
+    det = np.linalg.det(R)
+    if not np.isclose(det, 1.0, atol=tol):
+        return False
+
+    return True
 
 
 def normalize_edge(a, b):
@@ -70,10 +97,6 @@ def compute_barycentric_coords(p, tri):
     u = 1 - v - w
     return np.array([u, v, w])
 
-
-import math
-from collections import Counter
-from typing import Dict, List, Set, Tuple
 
 Vertex = int
 Triangle = Tuple[Vertex, Vertex, Vertex]
@@ -326,6 +349,8 @@ def compute_out_vector(normal, triangle, edge_centroid, edge_vector):
     out = np.cross(edge_vector, normal)
     if np.linalg.norm(out) < 1e-6:
         raise ValueError("Degenerate orientation: edge_vector and normal are parallel")
+
+    out = normalize(out)
 
     # Ensure it points from edge_centroid toward triangle centroid
     to_centroid = tri_centroid - edge_centroid
