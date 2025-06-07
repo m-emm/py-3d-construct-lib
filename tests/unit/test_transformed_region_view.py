@@ -297,3 +297,46 @@ def test_numerical_instability():
         shrinkage=0,
         shrink_border=shrink_border,
     )
+
+
+def test_transformed_edge_features_along_original_edge():
+    # Create cube mesh
+    vertices, faces = create_cube_geometry()
+    mesh = PartitionableSpheroidTriangleMesh(vertices=vertices, faces=faces)
+    partition = MeshPartition(mesh)
+
+    # Split with Z=0 plane (splits vertical edges)
+    partition = partition.perforate_and_split_region_by_plane(
+        region_id=0,
+        plane_point=np.array([0, 0, 0]),
+        plane_normal=np.array([0, 0, 1]),
+    )
+
+    # Create view for region 0 (lower half of cube)
+    view = TransformedRegionView(partition, region_id=0)
+
+    # Vertical edge from bottom to top (will be split)
+    v0 = 0  # (-1, -1, -1)
+    v1 = 4  # (-1, -1,  1)
+
+    features = view.find_transformed_edge_features_along_original_edge(v0, v1)
+
+    assert isinstance(features, list)
+    assert all(hasattr(f, "edge_coords") for f in features)
+    assert all(len(f.edge_coords) == 2 for f in features)
+
+    # Check each transformed point lies on the original edge line (after transform)
+    v0_trans = view.transform_point(mesh.vertices[v0])
+    v1_trans = view.transform_point(mesh.vertices[v1])
+    edge_vec = v1_trans - v0_trans
+    edge_len = np.linalg.norm(edge_vec)
+    edge_dir = edge_vec / edge_len
+
+    for feat in features:
+        for pt in feat.edge_coords:
+            proj_len = np.dot(pt - v0_trans, edge_dir)
+            closest = v0_trans + proj_len * edge_dir
+            dist = np.linalg.norm(pt - closest)
+            assert dist < 1e-6, f"Point {pt} is not on the transformed edge"
+
+    assert len(features) >= 1, "Expected at least one edge feature on the original edge"

@@ -15,10 +15,13 @@ from py_3d_construct_lib.construct_utils import (
     compute_triangle_normal,
     fibonacci_sphere,
     normalize,
+    normalize_edge,
+    triangle_edges,
 )
 from py_3d_construct_lib.partitionable_spheroid_triangle_mesh import (
     PartitionableSpheroidTriangleMesh,
 )
+from py_3d_construct_lib.region_edge_feature import RegionEdgeFeature
 from py_3d_construct_lib.spherical_tools import (
     cartesian_to_spherical_jackson,
     rotation_matrix_from_vectors,
@@ -255,14 +258,11 @@ class MeshPartition:
         subgraph = self.face_graph.subgraph(region_faces)
         return nx.is_connected(subgraph)
 
-    def _normalize_edge(self, a, b):
-        return tuple(sorted((a, b)))
-
     def _compute_boundary_edges(self):
         edge_to_faces = defaultdict(set)
         for i, face in enumerate(self.mesh.faces):
             for j in range(3):
-                edge = self._normalize_edge(face[j], face[(j + 1) % 3])
+                edge = normalize_edge(face[j], face[(j + 1) % 3])
                 edge_to_faces[edge].add(i)
 
         boundary_edges = defaultdict(set)
@@ -1608,3 +1608,240 @@ class MeshPartition:
                 )
 
         return current_partition
+
+    def find_region_subedges_along_original_edge(
+        self,
+        region_id: int,
+        v0: int,
+        v1: int,
+        epsilon: float = 1e-6,
+    ):
+        """
+        Given two original vertex indices (v0, v1), finds the maximal connected subsegments
+        in the current mesh that lie on the original edge and belong entirely to the given region.
+
+        Returns a list of (point_a, point_b) segments, with coordinates.
+        """
+        V = self.mesh.vertices
+        v0_coord = V[v0]
+        v1_coord = V[v1]
+        edge_vec = v1_coord - v0_coord
+        edge_len = np.linalg.norm(edge_vec)
+
+        if edge_len < epsilon:
+            return []
+
+        edge_dir = edge_vec / edge_len
+
+        def project_t(p):
+            """Return the t-value (0 to 1) of p along the original edge"""
+            return np.dot(p - v0_coord, edge_dir) / edge_len
+
+        # Collect all edges from triangles in the region
+        region_faces = [
+            idx for idx, r in self.face_to_region_map.items() if r == region_id
+        ]
+        region_edges = set()
+        for f_idx in region_faces:
+            face = self.mesh.faces[f_idx]
+            for a, b in triangle_edges(face):
+                region_edges.add(normalize_edge(a, b))
+
+        # Check which of those edges lie on the original edge (geometrically)
+        subsegments = []
+        for a, b in region_edges:
+            pa, pb = V[a], V[b]
+
+            # Project both endpoints to the line
+            for pt in [pa, pb]:
+                proj_len = np.dot(pt - v0_coord, edge_dir)
+                closest_pt = v0_coord + proj_len * edge_dir
+                if np.linalg.norm(pt - closest_pt) > epsilon:
+                    break
+            else:
+                ta = project_t(pa)
+                tb = project_t(pb)
+                subsegments.append((min(ta, tb), max(ta, tb), pa, pb))
+
+        # Sort by t and merge contiguous subsegments
+        subsegments.sort()
+        merged_segments = []
+
+        if not subsegments:
+            return []
+
+        current_start_t, current_end_t, current_pa, current_pb = subsegments[0]
+
+        for next_start_t, next_end_t, next_pa, next_pb in subsegments[1:]:
+            if next_start_t <= current_end_t + epsilon:
+                # Extend current segment
+                current_end_t = max(current_end_t, next_end_t)
+                current_pb = next_pb if next_end_t >= current_end_t else current_pb
+            else:
+                merged_segments.append((current_pa, current_pb))
+                current_start_t, current_end_t = next_start_t, next_end_t
+                current_pa, current_pb = next_pa, next_pb
+
+        merged_segments.append((current_pa, current_pb))
+
+        return merged_segments
+
+    def find_region_subedges_along_original_edge_indices(
+        self,
+        region_id: int,
+        v0: int,
+        v1: int,
+        epsilon: float = 1e-6,
+    ) -> list[tuple[int, int]]:
+        """
+        Like find_region_subedges_along_original_edge, but returns merged subsegments
+        as vertex index pairs (vi_a, vi_b) instead of coordinate tuples.
+
+        These are edges in the current mesh that lie on the original edge and belong
+        to the given region, merged into maximal contiguous segments.
+        """
+        V = self.mesh.vertices
+        v0_coord = V[v0]
+        v1_coord = V[v1]
+        edge_vec = v1_coord - v0_coord
+        edge_len = np.linalg.norm(edge_vec)
+
+        if edge_len < epsilon:
+            return []
+
+        edge_dir = edge_vec / edge_len
+
+        def project_t(p):
+            return np.dot(p - v0_coord, edge_dir) / edge_len
+
+        # Gather edges from the region
+        region_faces = [
+            idx for idx, r in self.face_to_region_map.items() if r == region_id
+        ]
+        region_edges = set()
+        for f_idx in region_faces:
+            face = self.mesh.faces[f_idx]
+            for a, b in triangle_edges(face):
+                region_edges.add(normalize_edge(a, b))
+
+        # Check which edges lie on the original edge
+        subsegments = []
+        for a, b in region_edges:
+            pa, pb = V[a], V[b]
+
+            if all(
+                np.linalg.norm(
+                    pt - (v0_coord + np.dot(pt - v0_coord, edge_dir) * edge_dir)
+                )
+                < epsilon
+                for pt in (pa, pb)
+            ):
+                ta = project_t(pa)
+                tb = project_t(pb)
+                subsegments.append((min(ta, tb), max(ta, tb), a, b))
+
+        # Sort and merge contiguous subsegments
+        subsegments.sort()
+        merged_segments = []
+
+        if not subsegments:
+            return []
+
+        _, current_end_t, current_a, current_b = subsegments[0]
+
+        for next_start_t, next_end_t, next_a, next_b in subsegments[1:]:
+            if next_start_t <= current_end_t + epsilon:
+                current_end_t = max(current_end_t, next_end_t)
+                current_b = next_b if next_end_t >= current_end_t else current_b
+            else:
+                merged_segments.append((current_a, current_b))
+                _, current_end_t, current_a, current_b = (
+                    next_start_t,
+                    next_end_t,
+                    next_a,
+                    next_b,
+                )
+
+        merged_segments.append((current_a, current_b))
+
+        return merged_segments
+
+    def find_region_edge_features(
+        self, region_id: int, epsilon=1e-6
+    ) -> list[RegionEdgeFeature]:
+        region_faces = [f for f, r in self.face_to_region_map.items() if r == region_id]
+
+        edge_to_faces = defaultdict(list)
+        for f_idx in region_faces:
+            face = self.mesh.faces[f_idx]
+            for a, b in triangle_edges(face):
+                edge = normalize_edge(a, b)
+                edge_to_faces[edge].append(f_idx)
+
+        features = []
+
+        for (vi1, vi2), face_ids in edge_to_faces.items():
+            p1, p2 = self.mesh.vertices[vi1], self.mesh.vertices[vi2]
+            edge_vec = normalize(p2 - p1)
+            edge_mid = (p1 + p2) / 2
+
+            face_geometry = []
+            face_normals = []
+            for f_idx in face_ids:
+                verts = self.mesh.faces[f_idx]
+                tri = tuple(self.mesh.vertices[i] for i in verts)
+                face_geometry.append(tri)
+                normal = normalize(compute_triangle_normal(*tri))
+                face_normals.append(normal)
+
+            features.append(
+                RegionEdgeFeature(
+                    region_id=region_id,
+                    edge_vertices=(vi1, vi2),
+                    edge_coords=(p1, p2),
+                    edge_vector=edge_vec,
+                    edge_centroid=edge_mid,
+                    face_ids=face_ids,
+                    face_vertices=face_geometry,
+                    face_normals=face_normals,
+                )
+            )
+
+        return features
+
+    def find_region_edge_features_along_original_edge(
+        self,
+        region_id: int,
+        v0: int,
+        v1: int,
+        epsilon: float = 1e-6,
+    ) -> list[RegionEdgeFeature]:
+        """
+        Returns RegionEdgeFeature objects for all subedges of the given original edge (v0, v1)
+        that lie within the given region.
+        """
+        # First, get subedge vertex index pairs along the original edge
+        subedges = self.find_region_subedges_along_original_edge_indices(
+            region_id=region_id,
+            v0=v0,
+            v1=v1,
+            epsilon=epsilon,
+        )
+
+        if not subedges:
+            return []
+
+        # Build edge -> feature map for all edges in region
+        all_features = self.find_region_edge_features(region_id)
+        edge_feature_map = {
+            normalize_edge(*feature.edge_vertices): feature for feature in all_features
+        }
+
+        # Collect only features corresponding to subedges
+        matched_features = []
+        for a, b in subedges:
+            key = normalize_edge(a, b)
+            if key in edge_feature_map:
+                matched_features.append(edge_feature_map[key])
+
+        return matched_features

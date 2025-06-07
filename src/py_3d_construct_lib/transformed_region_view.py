@@ -11,6 +11,7 @@ from py_3d_construct_lib.construct_utils import (
     normalize,
     triangle_area,
 )
+from py_3d_construct_lib.region_edge_feature import RegionEdgeFeature
 from py_3d_construct_lib.spherical_tools import rotation_matrix_from_vectors
 
 
@@ -122,6 +123,16 @@ class TransformedRegionView:
         V_transformed = (self.transform @ V_homo.T).T[:, :3]
 
         return V_transformed, F, E
+
+    def transform_point(self, vertex):
+        """Apply the current transformation to a single vertex."""
+        vertex_homo = np.concatenate([vertex, [1]])
+        transformed = self.transform @ vertex_homo
+        return transformed[:3]
+
+    def transformed_mesh_vertex_by_index(self, mesh_vertex_index):
+        vertex_coords = self.partition.mesh.vertices[mesh_vertex_index]
+        return self.transform_point(vertex_coords)
 
     def get_transformed_materialized_shell_maps(
         self, shell_thickness, shrinkage=0, shrink_border=0, smooth_inside=False
@@ -723,6 +734,47 @@ class TransformedRegionView:
             print("No suitable edge pairs found for laying flat.")
 
         return best_view if best_view is not None else self
+
+    def find_transformed_edge_features_along_original_edge(
+        self, v0: int, v1: int
+    ) -> list[RegionEdgeFeature]:
+        raw_features = self.partition.find_region_edge_features_along_original_edge(
+            region_id=self.region_id,
+            v0=v0,
+            v1=v1,
+        )
+
+        transformed_features = []
+        for feat in raw_features:
+            # Transform edge endpoints and centroid
+            p1_trans = self.transform_point(feat.edge_coords[0])
+            p2_trans = self.transform_point(feat.edge_coords[1])
+            centroid_trans = self.transform_point(feat.edge_centroid)
+
+            # Transform all triangle face vertices
+            face_vertices_trans = []
+            for tri in feat.face_vertices:
+                tri_trans = tuple(self.transform_point(v) for v in tri)
+                face_vertices_trans.append(tri_trans)
+
+            # Transform face normals (only rotate, don't translate)
+            R = self.transform[:3, :3]
+            face_normals_trans = [normalize(R @ n) for n in feat.face_normals]
+
+            transformed_features.append(
+                RegionEdgeFeature(
+                    region_id=feat.region_id,
+                    edge_vertices=feat.edge_vertices,  # mesh indices stay the same
+                    edge_coords=(p1_trans, p2_trans),
+                    edge_vector=normalize(p2_trans - p1_trans),
+                    edge_centroid=centroid_trans,
+                    face_ids=feat.face_ids,
+                    face_vertices=face_vertices_trans,
+                    face_normals=face_normals_trans,
+                )
+            )
+
+        return transformed_features
 
 
 def rotation_matrix_about_axis(axis, angle):

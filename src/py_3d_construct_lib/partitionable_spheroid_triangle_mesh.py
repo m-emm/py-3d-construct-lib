@@ -226,6 +226,18 @@ class PartitionableSpheroidTriangleMesh:
                 triangles.append(i)
         return triangles
 
+    def get_canonical_edges(self):
+        """
+        Returns a list of edges in the mesh.
+        Each edge is represented as a tuple of vertex indices.
+        """
+        edges = set()
+        for face in self.faces:
+            for i in range(3):
+                a, b = face[i], face[(i + 1) % 3]
+                edges.add(tuple(sorted((a, b))))
+        return list(edges)
+
     def get_vertices_by_label(self, label):
         """
         Returns a list of vertex indices that have the given label.

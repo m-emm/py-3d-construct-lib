@@ -19,6 +19,7 @@ from py_3d_construct_lib.mesh_partition import MeshPartition
 from py_3d_construct_lib.partitionable_spheroid_triangle_mesh import (
     PartitionableSpheroidTriangleMesh,
 )
+from py_3d_construct_lib.region_edge_feature import RegionEdgeFeature
 from py_3d_construct_lib.transformed_region_view import TransformedRegionView
 
 _logger = logging.getLogger(__name__)
@@ -544,3 +545,179 @@ def test_drill_hole_jaggedness():
         )
 
         print(f"Saved boundary walk visualization to {filename}")
+
+
+def test_find_region_subedges_along_original_edge():
+    vertices, faces = create_cube_geometry()
+    mesh = PartitionableSpheroidTriangleMesh(vertices=vertices, faces=faces)
+    partition = MeshPartition(mesh)
+
+    center = np.array([0.0, 0.0, 0.0])  # z=0 plane
+    normal = np.array([0.0, 0.0, 1.0])
+    partition = partition.perforate_and_split_region_by_plane(
+        region_id=0,
+        plane_point=center,
+        plane_normal=normal,
+    )
+
+    # Pick a vertical edge intersected by the plane
+    v0 = 0  # (-1, -1, -1)
+    v1 = 4  # (-1, -1,  1)
+
+    subedges = partition.find_region_subedges_along_original_edge(
+        0,
+        v0,
+        v1,
+    )
+
+    assert isinstance(subedges, list)
+    for a, b in subedges:
+        assert a.shape == (3,)
+        assert b.shape == (3,)
+        edge_vec = mesh.vertices[v1] - mesh.vertices[v0]
+        edge_len = np.linalg.norm(edge_vec)
+        edge_dir = edge_vec / edge_len
+
+        for pt in [a, b]:
+            proj_len = np.dot(pt - mesh.vertices[v0], edge_dir)
+            closest = mesh.vertices[v0] + proj_len * edge_dir
+            dist = np.linalg.norm(pt - closest)
+            assert dist < 1e-6, f"Point {pt} is not on the original edge"
+
+    assert len(subedges) >= 1, "Expected at least one subsegment on the original edge"
+
+
+def test_find_region_subedges_along_original_edge_indices():
+    # Create a cube mesh
+    vertices, faces = create_cube_geometry()
+    mesh = PartitionableSpheroidTriangleMesh(vertices=vertices, faces=faces)
+    partition = MeshPartition(mesh)
+
+    # Perform a plane perforation to split some vertical edges
+    center = np.array([0.0, 0.0, 0.0])
+    normal = np.array([0.0, 0.0, 1.0])
+    partition = partition.perforate_and_split_region_by_plane(
+        region_id=0,
+        plane_point=center,
+        plane_normal=normal,
+    )
+
+    # Pick a vertical edge that is cut by the z=0 plane
+    v0 = 0  # (-1, -1, -1)
+    v1 = 4  # (-1, -1,  1)
+
+    subedge_indices = partition.find_region_subedges_along_original_edge_indices(
+        region_id=0, v0=v0, v1=v1
+    )
+
+    assert isinstance(subedge_indices, list)
+    assert all(isinstance(pair, tuple) and len(pair) == 2 for pair in subedge_indices)
+
+    # Geometry check: each subedge must lie on the original line
+    v0_coord = mesh.vertices[v0]
+    v1_coord = mesh.vertices[v1]
+    edge_vec = v1_coord - v0_coord
+    edge_len = np.linalg.norm(edge_vec)
+    edge_dir = edge_vec / edge_len
+
+    for vi_a, vi_b in subedge_indices:
+        for vi in (vi_a, vi_b):
+            pt = partition.mesh.vertices[vi]
+            proj_len = np.dot(pt - v0_coord, edge_dir)
+            closest = v0_coord + proj_len * edge_dir
+            dist = np.linalg.norm(pt - closest)
+            assert dist < 1e-6, f"Vertex {vi} ({pt}) not on original edge"
+
+    # Sanity check: we expect at least one subedge if the original edge was split
+    assert (
+        len(subedge_indices) >= 1
+    ), "Expected at least one subedge along original edge"
+
+
+def test_find_region_edge_features():
+    vertices, faces = create_cube_geometry()
+    mesh = PartitionableSpheroidTriangleMesh(vertices=vertices, faces=faces)
+    partition = MeshPartition(mesh)
+
+    center = np.array([0.0, 0.0, 0.0])  # z=0 plane
+    normal = np.array([0.0, 0.0, 1.0])
+    partition = partition.perforate_and_split_region_by_plane(
+        region_id=0,
+        plane_point=center,
+        plane_normal=normal,
+    )
+
+    features = partition.find_region_edge_features(region_id=0)
+
+    assert isinstance(features, list)
+    assert all(isinstance(f, RegionEdgeFeature) for f in features)
+    assert all(f.region_id == 0 for f in features)
+
+    for f in features:
+        # check geometry dimensions
+        assert f.edge_coords[0].shape == (3,)
+        assert f.edge_coords[1].shape == (3,)
+        assert f.edge_vector.shape == (3,)
+        assert f.edge_centroid.shape == (3,)
+        assert all(n.shape == (3,) for n in f.face_normals)
+        assert all(len(verts) == 3 for verts in f.face_vertices)
+
+        # edge vector must align with the segment
+        actual_vec = f.edge_coords[1] - f.edge_coords[0]
+        actual_len = np.linalg.norm(actual_vec)
+        if actual_len > 0:
+            actual_dir = actual_vec / actual_len
+            dot = np.dot(actual_dir, f.edge_vector)
+            assert (
+                abs(abs(dot) - 1.0) < 1e-6
+            ), "edge_vector is not aligned with actual edge"
+
+        # centroid must be midpoint
+        midpoint = (f.edge_coords[0] + f.edge_coords[1]) / 2
+        dist = np.linalg.norm(midpoint - f.edge_centroid)
+        assert dist < 1e-6, "edge_centroid is not midpoint of edge"
+
+    assert len(features) >= 1, "Expected at least one RegionEdgeFeature"
+
+
+def test_find_region_edge_features_along_original_edge():
+    vertices, faces = create_cube_geometry()
+    mesh = PartitionableSpheroidTriangleMesh(vertices=vertices, faces=faces)
+    partition = MeshPartition(mesh)
+
+    # Perforate through Z=0 to split vertical edges
+    center = np.array([0.0, 0.0, 0.0])
+    normal = np.array([0.0, 0.0, 1.0])
+    partition = partition.perforate_and_split_region_by_plane(
+        region_id=0,
+        plane_point=center,
+        plane_normal=normal,
+    )
+
+    # Pick original vertical edge cut by the plane
+    v0 = 0  # (-1, -1, -1)
+    v1 = 4  # (-1, -1,  1)
+
+    # Now find edge features on subedges from this original edge
+    features = partition.find_region_edge_features_along_original_edge(
+        region_id=0,
+        v0=v0,
+        v1=v1,
+    )
+
+    assert isinstance(features, list)
+    assert all(isinstance(f, RegionEdgeFeature) for f in features)
+
+    assert len(features) >= 1, "Expected at least one edge feature for subedges"
+
+    for f in features:
+        a, b = f.edge_coords
+        edge_vec = mesh.vertices[v1] - mesh.vertices[v0]
+        edge_len = np.linalg.norm(edge_vec)
+        edge_dir = edge_vec / edge_len
+
+        for pt in [a, b]:
+            proj_len = np.dot(pt - mesh.vertices[v0], edge_dir)
+            closest = mesh.vertices[v0] + proj_len * edge_dir
+            dist = np.linalg.norm(pt - closest)
+            assert dist < 1e-6, f"Point {pt} is not on the original edge"
