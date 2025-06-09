@@ -6,9 +6,12 @@ import pytest
 from py_3d_construct_lib.construct_utils import (
     CylinderSpec,
     compute_area,
+    fit_sphere_center_along_plane_normal,
+    fit_sphere_to_points,
     intersect_edge_with_cylinder,
     normalize,
     normalize_edge,
+    select_uniform_cylindrical_vertices,
     split_triangle_topologically,
     triangle_edges,
 )
@@ -354,3 +357,101 @@ def test_intersect_edge_with_cylinder_outside_radius():
     p2 = np.array([3.0, 0.0, 1.0])
 
     assert intersect_edge_with_cylinder(p1, p2, cylinder) is None
+
+
+def test_select_uniform_cylindrical_vertices():
+    np.random.seed(42)  # For reproducibility
+
+    cylinder_angle = np.radians(80)
+    cylinder_start_angle = np.radians(70)
+
+    cylinder_radius = 100
+    cylinder_height = 100  # increase to allow selection room
+
+    min_dist = 20.0
+    unsupported_threshold = 20.0
+    cylinder_center = np.array([30, 70])
+    cylinder_center_xy = cylinder_center
+
+    radius_noise = 0.5  # ±50% radius variation
+
+    num_points = 200
+
+    vertices = []
+    for _ in range(num_points):
+        r = cylinder_radius + np.random.uniform(-radius_noise, radius_noise)
+        theta = cylinder_start_angle + np.random.uniform(0, cylinder_angle)
+
+        x = cylinder_center[0] + r * np.cos(theta)
+        y = cylinder_center[1] + r * np.sin(theta)
+        z = np.random.uniform(0, cylinder_height)
+
+        vertices.append([x, y, z])
+
+    vertices = np.array(vertices)
+
+    selected = select_uniform_cylindrical_vertices(
+        vertices,
+        cylinder_center_xy,
+        min_vertex_distance=min_dist,
+        allowed_unsupported_height=unsupported_threshold,
+    )
+
+    assert len(selected) > 0, "No vertices were selected, expected at least some"
+
+    rel = selected[:, :2] - cylinder_center_xy
+    radii = np.linalg.norm(rel, axis=1)
+    thetas = np.arctan2(rel[:, 1], rel[:, 0])
+    thetas = np.unwrap(thetas)
+    theta_corrected = thetas * np.mean(radii)
+    z_theta = np.stack([selected[:, 2], theta_corrected], axis=1)
+
+    # Validate: all above height threshold
+    assert np.all(
+        selected[:, 2] >= unsupported_threshold
+    ), "Some vertices below height threshold"
+
+    # Validate: pairwise distance constraint in (z, theta_corrected) space
+    for i in range(len(z_theta)):
+        for j in range(i + 1, len(z_theta)):
+            dist = np.linalg.norm(z_theta[i] - z_theta[j])
+            assert dist >= min_dist, f"Selected vertices too close: dist={dist:.2f}"
+
+    print(f"Selected {len(selected)} support vertices from {num_points} total.")
+
+
+def test_fit_sphere_to_points():
+    vertices = []
+    num_points = 100
+
+    sphere_radius = 100
+    radius_noise = 0.01
+
+    sphere_center = np.array([-79, 268, 776])
+    radius_range = sphere_radius * radius_noise
+
+    theta_start_angle = np.radians(70)
+    theta_range = np.radians(50)
+
+    phi_start_angle = np.radians(30)
+    phi_range = np.radians(50)
+
+    for i in range(num_points):
+        r = sphere_radius + np.random.uniform(-radius_range, radius_range)
+
+        theta = theta_start_angle + np.random.uniform(0, theta_range)
+        phi = phi_start_angle + np.random.uniform(0, phi_range)
+
+        x = sphere_center[0] + r * np.sin(theta) * np.cos(phi)
+        y = sphere_center[1] + r * np.sin(theta) * np.sin(phi)
+        z = sphere_center[2] + r * np.cos(theta)
+
+        vertices.append([x, y, z])
+
+    vertices = np.array(vertices)
+
+    center, radius = fit_sphere_to_points(vertices)
+
+    # Check that center and radius are close to expected
+    assert np.linalg.norm(center - sphere_center) < 5.0
+    assert abs(radius - sphere_radius) < 5.0

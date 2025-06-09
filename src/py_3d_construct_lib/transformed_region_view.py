@@ -12,7 +12,10 @@ from py_3d_construct_lib.construct_utils import (
     triangle_area,
 )
 from py_3d_construct_lib.region_edge_feature import RegionEdgeFeature
-from py_3d_construct_lib.spherical_tools import rotation_matrix_from_vectors
+from py_3d_construct_lib.spherical_tools import (
+    ray_triangle_intersect,
+    rotation_matrix_from_vectors,
+)
 
 
 class TransformedRegionView:
@@ -26,6 +29,49 @@ class TransformedRegionView:
         self.region_id = region_id
         self.transform = transform if transform is not None else np.eye(4)
         assert is_valid_rigid_transform(self.transform), "Transform is not rigid!"
+
+        self.face_cache = None
+        self.vertex_cache = None
+        self.edge_cache = None
+
+    def get_transformed_vertices_faces_boundary_edges(self):
+        """Return transformed vertex array and face index list."""
+
+        if (
+            self.face_cache is not None
+            and self.vertex_cache is not None
+            and self.edge_cache is not None
+        ):
+
+            # Return cached values if available
+            return self.vertex_cache, self.face_cache, self.edge_cache
+
+        maps = self.partition.get_submesh_maps(self.region_id)
+
+        V = np.array([maps["vertexes"][i] for i in sorted(maps["vertexes"])])
+        F = np.array([maps["faces"][i] for i in sorted(maps["faces"])])
+        E = np.array(
+            sorted([maps["boundary_edges"][i] for i in sorted(maps["boundary_edges"])])
+        )
+
+        vertex_indices_in_edges = set()
+        for a, b in E:
+            vertex_indices_in_edges.add(a)
+            vertex_indices_in_edges.add(b)
+
+        assert all(
+            j < len(V) for j in vertex_indices_in_edges
+        ), "Vertex indices in edges are out of bounds"
+
+        # Apply affine transformation to homogeneous coords
+        V_homo = np.concatenate([V, np.ones((len(V), 1))], axis=1)
+        V_transformed = (self.transform @ V_homo.T).T[:, :3]
+
+        self.vertex_cache = V_transformed
+        self.face_cache = F
+        self.edge_cache = E
+
+        return V_transformed, F, E
 
     def apply_transform(self, mat4x4: np.ndarray):
         """Returns a new view with the composed transformation applied."""
@@ -99,31 +145,6 @@ class TransformedRegionView:
         T[:3, 3] = vec
         return self.apply_transform(T)
 
-    def get_transformed_vertices_faces_boundary_edges(self):
-        """Return transformed vertex array and face index list."""
-        maps = self.partition.get_submesh_maps(self.region_id)
-
-        V = np.array([maps["vertexes"][i] for i in sorted(maps["vertexes"])])
-        F = np.array([maps["faces"][i] for i in sorted(maps["faces"])])
-        E = np.array(
-            sorted([maps["boundary_edges"][i] for i in sorted(maps["boundary_edges"])])
-        )
-
-        vertex_indices_in_edges = set()
-        for a, b in E:
-            vertex_indices_in_edges.add(a)
-            vertex_indices_in_edges.add(b)
-
-        assert all(
-            j < len(V) for j in vertex_indices_in_edges
-        ), "Vertex indices in edges are out of bounds"
-
-        # Apply affine transformation to homogeneous coords
-        V_homo = np.concatenate([V, np.ones((len(V), 1))], axis=1)
-        V_transformed = (self.transform @ V_homo.T).T[:, :3]
-
-        return V_transformed, F, E
-
     def transform_point(self, vertex):
         """Apply the current transformation to a single vertex."""
         vertex_homo = np.concatenate([vertex, [1]])
@@ -166,6 +187,23 @@ class TransformedRegionView:
 
         return result, vertex_index_map
 
+    def ray_intersect_faces(self, ray_origin: np.ndarray, ray_direction: np.ndarray):
+        """
+        Given a ray, return a list of tuples (face_id, intersection_point)
+        for all intersected triangles in the transformed region.
+        """
+        V, F, _ = self.get_transformed_vertices_faces_boundary_edges()
+
+        hits = []
+
+        for face_id, (i0, i1, i2) in enumerate(F):
+            triangle = np.array([V[i0], V[i1], V[i2]])
+            hit = ray_triangle_intersect(ray_origin, ray_direction, triangle)
+            if hit is not None:
+                hits.append((face_id, hit))
+
+        return hits
+
     def compute_transformed_connector_hints(
         self, shell_thickness, merge_connectors=False
     ):
@@ -193,6 +231,60 @@ class TransformedRegionView:
             for h in connector_hints
             if h.region_a == self.region_id or h.region_b == self.region_id
         ]
+
+    def face_centroid(self, face_index: int) -> np.ndarray:
+        """
+        Compute the centroid of a face in the transformed region.
+
+        Parameters:
+        -----------
+        face_index : int
+            Index of the face in the region.
+
+        Returns:
+        --------
+        np.ndarray
+            Centroid of the face.
+        """
+        V, F, _ = self.get_transformed_vertices_faces_boundary_edges()
+
+        if face_index < 0 or face_index >= len(F):
+            raise ValueError(
+                f"face_index {face_index} is out of bounds for region with {len(F)} faces."
+            )
+
+        face = F[face_index]
+        vertices = [V[i] for i in face]
+        centroid = np.mean(vertices, axis=0)
+
+        return centroid
+
+    def face_normal(self, face_index: int) -> np.ndarray:
+        """
+        Compute the normal vector of a face in the transformed region.
+
+        Parameters:
+        -----------
+        face_index : int
+            Index of the face in the region.
+
+        Returns:
+        --------
+        np.ndarray
+            Normal vector of the face.
+        """
+        V, F, _ = self.get_transformed_vertices_faces_boundary_edges()
+
+        if face_index < 0 or face_index >= len(F):
+            raise ValueError(
+                f"face_index {face_index} is out of bounds for region with {len(F)} faces."
+            )
+
+        face = F[face_index]
+        a, b, c = [V[i] for i in face]
+        n = np.cross(b - a, c - a)
+
+        return normalize(n)
 
     def lay_flat(self, definition_of_low: float = 1) -> "TransformedRegionView":
         """

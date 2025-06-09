@@ -5,6 +5,7 @@ from typing import Dict, List, Optional, Set, Tuple
 
 import numpy as np
 from py_3d_construct_lib.spherical_tools import rotation_matrix_from_vectors
+from scipy.optimize import minimize_scalar
 
 
 def is_valid_rigid_transform(T: np.ndarray, tol=1e-6) -> bool:
@@ -63,16 +64,45 @@ def are_normals_similar(n1: np.ndarray, n2: np.ndarray, tol: float = 1e-3) -> bo
     return np.dot(n1, n2) > 1.0 - tol
 
 
-def fibonacci_sphere(samples=100):
+def fibonacci_sphere_spherical_coordinates(samples=100):
+    """
+    Generates spherical coordinates (theta, phi) for points evenly distributed on a sphere
+    using the Fibonacci spiral method.
+
+    Returns:
+        List of (theta, phi) tuples where:
+            - theta ∈ [0, 2π) is the azimuthal angle
+            - phi ∈ [0, π] is the polar angle
+    """
     points = []
-    phi = math.pi * (3.0 - math.sqrt(5.0))  # golden angle
+    golden_angle = math.pi * (3.0 - math.sqrt(5.0))  # ~2.399963
+
     for i in range(samples):
-        y = 1 - (i / float(samples - 1)) * 2  # y goes from 1 to -1
-        radius = math.sqrt(1 - y * y)
-        theta = phi * i
-        x = math.cos(theta) * radius
-        z = math.sin(theta) * radius
+        y = 1 - (i / float(samples - 1)) * 2  # y ∈ [1, -1]
+        theta = golden_angle * i
+        phi = math.acos(y)  # polar angle from +Z
+        points.append((theta, phi))
+
+    return points
+
+
+def fibonacci_sphere(samples=100):
+    """
+    Generates 3D Cartesian coordinates for points evenly distributed on a unit sphere,
+    using spherical coordinates from Fibonacci spiral sampling.
+
+    Returns:
+        List of np.array([x, y, z]) points on the unit sphere.
+    """
+    points = []
+    spherical_coords = fibonacci_sphere_spherical_coordinates(samples)
+
+    for theta, phi in spherical_coords:
+        x = math.sin(phi) * math.cos(theta)
+        y = math.cos(phi)
+        z = math.sin(phi) * math.sin(theta)
         points.append(np.array([x, y, z]))
+
     return points
 
 
@@ -96,6 +126,23 @@ def compute_barycentric_coords(p, tri):
     w = (d00 * d21 - d01 * d20) / denom
     u = 1 - v - w
     return np.array([u, v, w])
+
+
+def is_point_in_triangle(p, v0, v1, v2, tol=1e-6):
+    """
+    Check if point p is inside the triangle defined by vertices v0, v1, v2.
+    Uses barycentric coordinates to determine if the point lies within the triangle.
+    """
+    v0 = np.array(v0)
+    v1 = np.array(v1)
+    v2 = np.array(v2)
+    p = np.array(p)
+
+    bary_coords = compute_barycentric_coords(p, (v0, v1, v2))
+    if bary_coords is None:
+        return False
+    u, v, w = bary_coords
+    return u >= -tol and v >= -tol and w >= -tol and u + v + w <= 1 + tol
 
 
 Vertex = int
@@ -357,3 +404,172 @@ def compute_out_vector(normal, triangle, edge_centroid, edge_vector):
     if np.dot(out, to_centroid) < 0:
         out = -out
     return out
+
+
+def select_uniform_cylindrical_vertices(
+    vertices,
+    cylinder_center_xy,
+    min_vertex_distance=20.0,
+    allowed_unsupported_height=60.0,
+):
+    points = np.array(vertices)
+
+    radii = np.linalg.norm(points[:, :2] - cylinder_center_xy, axis=1)
+    mean_radius = np.mean(radii)
+
+    xy = points[:, :2]
+    z = points[:, 2]
+    rel = xy - cylinder_center_xy
+    theta = np.arctan2(rel[:, 1], rel[:, 0])
+    theta = np.unwrap(theta)
+    theta_corrected = theta * mean_radius
+
+    z_theta = np.stack([z, theta_corrected], axis=1)
+
+    z_min = allowed_unsupported_height
+    z_max = np.max(z)
+    theta_min = np.min(theta)
+    theta_max = np.max(theta)
+    theta_margin = 0.1 * (theta_max - theta_min)
+    theta_lo = theta_min + theta_margin
+    theta_hi = theta_max - theta_margin
+
+    valid_mask = (z >= z_min) & (theta >= theta_lo) & (theta <= theta_hi)
+    candidate_indices = np.where(valid_mask)[0]
+    candidate_points = z_theta[valid_mask]
+
+    selected_indices = []
+
+    def recurse(candidates, selected, bbox_min, bbox_max):
+        if len(candidates) == 0:
+            return
+
+        zc_min, tc_min = bbox_min
+        zc_max, tc_max = bbox_max
+
+        in_bounds = (
+            (candidates[:, 0] >= zc_min)
+            & (candidates[:, 0] <= zc_max)
+            & (candidates[:, 1] >= tc_min)
+            & (candidates[:, 1] <= tc_max)
+        )
+        bounded_candidates = candidates[in_bounds]
+        if len(bounded_candidates) == 0:
+            return
+
+        def try_add(point):
+            for j in selected:
+                if np.linalg.norm(point - candidate_points[j]) < min_vertex_distance:
+                    return
+            idx = np.where((candidate_points == point).all(axis=1))[0][0]
+            selected.append(idx)
+
+        # Add four corners
+        try_add(
+            bounded_candidates[
+                np.argmax(bounded_candidates[:, 0] + bounded_candidates[:, 1])
+            ]
+        )  # top-right
+        try_add(
+            bounded_candidates[
+                np.argmax(bounded_candidates[:, 0] - bounded_candidates[:, 1])
+            ]
+        )  # top-left
+        try_add(
+            bounded_candidates[
+                np.argmin(bounded_candidates[:, 0] - bounded_candidates[:, 1])
+            ]
+        )  # bottom-left
+        try_add(
+            bounded_candidates[
+                np.argmin(bounded_candidates[:, 0] + bounded_candidates[:, 1])
+            ]
+        )  # bottom-right
+
+        # Center
+        center = (np.array(bbox_min) + np.array(bbox_max)) / 2
+        dists = np.linalg.norm(bounded_candidates - center, axis=1)
+        center_point = bounded_candidates[np.argmin(dists)]
+        try_add(center_point)
+
+        # Don't recurse below a minimum box size
+        if tc_max - tc_min < min_vertex_distance:
+            return
+
+        # Recurse into 4 quadrants
+        mid_z = (zc_min + zc_max) / 2
+        mid_t = (tc_min + tc_max) / 2
+        recurse(candidates, selected, (zc_min, tc_min), (mid_z, mid_t))
+        recurse(candidates, selected, (zc_min, mid_t), (mid_z, tc_max))
+        recurse(candidates, selected, (mid_z, tc_min), (zc_max, mid_t))
+        recurse(candidates, selected, (mid_z, mid_t), (zc_max, tc_max))
+
+    z_max = np.max(z)
+    bbox_min = [z_min, theta_lo * mean_radius]
+    bbox_max = [z_max, theta_hi * mean_radius]
+    recurse(candidate_points, selected_indices, bbox_min, bbox_max)
+
+    return vertices[candidate_indices[selected_indices]]
+
+
+def fit_sphere_to_points(points: np.ndarray, weights: np.ndarray = None):
+    """
+    Fit a sphere to a set of 3D points using algebraic least squares.
+
+    Args:
+        points: (N, 3) array of triangle centroids
+        weights: (N,) array of triangle areas (optional)
+
+    Returns:
+        center: (3,) array — estimated sphere center
+        radius: float — estimated radius
+    """
+    assert points.shape[1] == 3, "Expecting (N, 3) array for points"
+
+    A = np.hstack((2 * points, np.ones((len(points), 1))))
+    b = np.sum(points**2, axis=1)
+
+    if weights is not None:
+        W = np.diag(weights)
+        A = W @ A
+        b = W @ b
+
+    x, *_ = np.linalg.lstsq(A, b, rcond=None)
+    center = x[:3]
+    radius = np.sqrt(np.sum(center**2) + x[3])
+
+    return center, radius
+
+
+def fit_plane(points: np.ndarray):
+    """Fit plane to points via PCA. Returns (centroid, normal)."""
+    centroid = np.mean(points, axis=0)
+    centered = points - centroid
+    _, _, vh = np.linalg.svd(centered, full_matrices=False)
+    normal = vh[-1]  # Normal is the last right-singular vector
+    return centroid, normal
+
+
+def fit_sphere_center_along_plane_normal(points: np.ndarray):
+    """
+    Fit sphere center constrained to lie on the normal line of the best-fit plane.
+    Returns (best_center, best_radius).
+    """
+    centroid, normal = fit_plane(points)
+
+    def sphere_fit_error(t):
+        center = centroid + t * normal
+        dists = np.linalg.norm(points - center, axis=1)
+        r_mean = np.mean(dists)
+        return np.mean((dists - r_mean) ** 2)  # Variance of radius
+
+    # Optimize along t axis
+    result = minimize_scalar(sphere_fit_error, bounds=(-1000, 1000), method="bounded")
+    best_t = result.x
+    best_center = centroid + best_t * normal
+
+    # Final best radius
+    dists = np.linalg.norm(points - best_center, axis=1)
+    best_radius = np.mean(dists)
+
+    return best_center, best_radius

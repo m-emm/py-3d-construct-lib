@@ -40,3 +40,21 @@ def test_rotation_matrix_from_vectors_opposite_vectors():
     assert np.isclose(
         np.linalg.det(R), 1.0, atol=1e-6
     ), "Determinant is not 1 (not a proper rotation)"
+
+
+def test_ray_triangle_intersect():
+    # Define a triangle in 3D space
+    triangle_vertices = np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
+
+    # Define a ray that intersects the triangle
+    ray_origin = np.array([0.5, 0.5, -1.0])
+    ray_direction = np.array([0.0, 0.0, 1.0])  # Pointing upwards
+
+    intersection_point = ray_triangle_intersect(
+        ray_origin, ray_direction, triangle_vertices
+    )
+
+    assert intersection_point is not None, "Expected an intersection point"
+    assert np.allclose(
+        intersection_point, [0.5, 0.5, 0.0]
+    ), "Intersection point mismatch"
