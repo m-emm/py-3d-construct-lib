@@ -32,7 +32,7 @@ def test_transformed_shell_map():
     )
 
     # Step 4: Get a region view and apply a transformation (e.g., small translation)
-    region_view = partition.region_view(0).translated(1.0, 0.0, 0.0)
+    region_view = TransformedRegionView(partition, 0).translated(1.0, 0.0, 0.0)
 
     # Step 5: Compute transformed shell maps
     shell_maps, vertex_index_map = region_view.get_transformed_materialized_shell_maps(
@@ -74,7 +74,7 @@ def test_compute_connector_hints_on_transformed_region_view():
         0, np.array([0, 0, 0]), np.array([0, 0, 1])
     )
 
-    region_view = partition.region_view(0)
+    region_view = TransformedRegionView(partition, 0)
 
     num_faces = region_view.num_faces()
     print(f"Region {region_view.region_id} has {num_faces} faces")
@@ -125,7 +125,7 @@ def test_compute_connector_hints_merge_tetrahedron():
     region_views = []
 
     for region_id in partition.get_regions():
-        view = partition.region_view(region_id)
+        view = TransformedRegionView(partition, region_id)
 
         if region_id == 0:
             view = view.rotated(np.deg2rad(180), axis=(1, 0, 0))
@@ -187,7 +187,7 @@ def test_lay_flat_optimal():
     region_views = []
 
     for region_id in partition.get_regions():
-        view = partition.region_view(region_id)
+        view = TransformedRegionView(partition, region_id)
         region_views.append(view)
 
     # Step 5: Fuse solids per region
@@ -227,7 +227,7 @@ def test_lay_flat_on_edge():
     region_views = []
 
     for region_id in partition.get_regions():
-        view = partition.region_view(region_id)
+        view = TransformedRegionView(partition, region_id)
         region_views.append(view)
 
     region_view = region_views[1]

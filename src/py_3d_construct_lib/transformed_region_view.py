@@ -11,6 +11,7 @@ from py_3d_construct_lib.construct_utils import (
     normalize,
     triangle_area,
 )
+from py_3d_construct_lib.mesh_partition import MeshPartition
 from py_3d_construct_lib.region_edge_feature import RegionEdgeFeature
 from py_3d_construct_lib.spherical_tools import (
     ray_triangle_intersect,
@@ -25,7 +26,7 @@ class TransformedRegionView:
         region_id: int,
         transform: Optional[np.ndarray] = None,
     ):
-        self.partition = partition
+        self.partition: MeshPartition = partition
         self.region_id = region_id
         self.transform = transform if transform is not None else np.eye(4)
         assert is_valid_rigid_transform(self.transform), "Transform is not rigid!"

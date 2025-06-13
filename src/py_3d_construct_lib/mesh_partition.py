@@ -26,7 +26,6 @@ from py_3d_construct_lib.spherical_tools import (
     cartesian_to_spherical_jackson,
     rotation_matrix_from_vectors,
 )
-from py_3d_construct_lib.transformed_region_view import TransformedRegionView
 
 _logger = logging.getLogger(__name__)
 
@@ -823,10 +822,6 @@ class MeshPartition:
     def vertex_shortest_path(self, u, v):
         return nx.shortest_path(self.edge_graph, source=u, target=v, weight="weight")
 
-    def region_view(self, region_id: int) -> "TransformedRegionView":
-        """Return a view of the given region with identity transform."""
-        return TransformedRegionView(self, region_id, transform=np.eye(4))
-
     def split_region_by_fibonacci_plane(
         self,
         region_id: int,
@@ -1201,10 +1196,13 @@ class MeshPartition:
         - phi: extra rotation angle (in radians) around the Z-axis
         - steps: number of candidate x-cuts to try
         """
+
+        from py_3d_construct_lib.transformed_region_view import TransformedRegionView
+
         if not (0.0 < target_area_fraction < 1.0):
             raise ValueError("target_area_fraction must be between 0 and 1.")
 
-        view = self.region_view(region_id)
+        view = TransformedRegionView(self, region_id)
 
         # Step 1: Compute average direction of region (mean of vertex positions, normalized)
         V, F, _ = view.get_transformed_vertices_faces_boundary_edges()
