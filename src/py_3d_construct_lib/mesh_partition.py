@@ -437,6 +437,42 @@ class MeshPartition:
 
         return maps
 
+    def get_region_vertices(self, region_id: int) -> np.ndarray:
+        """
+        Returns the vertices of the specified region as a numpy array.
+        """
+        faces_of_region = self.get_faces_of_region(region_id)
+        if not faces_of_region:
+            raise ValueError(f"Region {region_id} has no faces.")
+
+        vertex_indices = set()
+        for face_index in faces_of_region:
+            face = self.mesh.faces[face_index]
+            vertex_indices.update(face)
+
+        if not vertex_indices:
+            raise ValueError(f"Region {region_id} has no vertices.")
+
+        return np.array([self.mesh.vertices[v] for v in sorted(vertex_indices)])
+
+    def get_region_centroid(self, region_id: int) -> np.ndarray:
+        """
+        Computes the centroid of the specified region by averaging all vertices in the region
+        """
+        faces_of_region = self.get_faces_of_region(region_id)
+        if not faces_of_region:
+            raise ValueError(f"Region {region_id} has no faces.")
+
+        vertex_indices = set()
+        for face_index in faces_of_region:
+            face = self.mesh.faces[face_index]
+            vertex_indices.update(face)
+        if not vertex_indices:
+            raise ValueError(f"Region {region_id} has no vertices.")
+        vertices = np.array([self.mesh.vertices[v] for v in vertex_indices])
+        centroid = np.mean(vertices, axis=0)
+        return centroid
+
     def split_region_by_cap(
         self,
         region_id: int,

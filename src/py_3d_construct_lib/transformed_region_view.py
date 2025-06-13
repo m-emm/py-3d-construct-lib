@@ -187,6 +187,23 @@ class TransformedRegionView:
 
         return result, vertex_index_map
 
+    def vertex_indices_closer_than(self, point, min_distance):
+        V, _, _ = self.get_transformed_vertices_faces_boundary_edges()
+        point = np.array(point)
+        close_vertices = []
+        for i, v in enumerate(V):
+            if np.linalg.norm(v - point) < min_distance:
+                close_vertices.append(i)
+        return close_vertices
+
+    def face_indices_of_vertex_index_set(self, vertex_indices):
+        _, F, _ = self.get_transformed_vertices_faces_boundary_edges()
+        face_indices = set()
+        for i, face in enumerate(F):
+            if any(v in vertex_indices for v in face):
+                face_indices.add(i)
+        return sorted(face_indices)
+
     def ray_intersect_faces(self, ray_origin: np.ndarray, ray_direction: np.ndarray):
         """
         Given a ray, return a list of tuples (face_id, intersection_point)
