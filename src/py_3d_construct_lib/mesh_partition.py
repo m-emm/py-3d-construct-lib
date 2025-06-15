@@ -336,6 +336,17 @@ class MeshPartition:
             self.mesh.triangle_area(self.mesh.faces[face]) for face in faces_of_region
         )
 
+    def find_regions_of_edge(self, edge: tuple[int, int]) -> List[int]:
+        """
+        Returns a list of region IDs that contain the edge defined by the vertex indices.
+        """
+        regions = set()
+        for face_index, region in self.face_to_region_map.items():
+            face = self.mesh.faces[face_index]
+            if edge[0] in face and edge[1] in face:
+                regions.add(region)
+        return tuple(sorted(regions))
+
     def find_regions_of_vertex_by_label(self, vertex_label: str) -> List[int]:
         """
         Returns a list of region IDs that contain the vertex with the given label.
@@ -352,7 +363,7 @@ class MeshPartition:
         return sorted(regions)
 
     def compute_connector_hints(
-        self, shell_thickness, merge_connectors=False
+        self, shell_thickness, merge_connectors=False, min_connector_distance=None
     ) -> list[ConnectorHint]:
         shell_maps, vertex_index_map = self.mesh.calculate_materialized_shell_maps(
             shell_thickness
@@ -367,6 +378,64 @@ class MeshPartition:
 
         if merge_connectors:
             connector_hints = merge_collinear_connectors(connector_hints)
+
+        # filter out corner connectors
+
+        vertex_regions = defaultdict(set)
+        for face_index, region in self.face_to_region_map.items():
+            face = self.mesh.faces[face_index]
+            for vertex_index in face:
+                vertex_regions[vertex_index].add(region)
+
+        corner_vertices = {
+            v for v, regions in vertex_regions.items() if len(regions) > 2
+        }
+
+        connector_hints = [
+            hint
+            for hint in connector_hints
+            if not any(v in corner_vertices for v in hint.triangle_a_vertex_indices)
+            and not any(v in corner_vertices for v in hint.triangle_b_vertex_indices)
+        ]
+
+        if min_connector_distance is not None:
+            filtered_hints = []
+
+            hints_by_region_pair = defaultdict(list)
+            for hint_index, hint in enumerate(connector_hints):
+                key = tuple(sorted((hint.region_a, hint.region_b)))
+                hints_by_region_pair[key].append((hint_index, hint))
+
+            for region_pair, hints_for_pair in hints_by_region_pair.items():
+
+                edge_centroids = np.array(
+                    [hint.edge_centroid for _, hint in hints_for_pair]
+                )
+                region_pair_centroid = np.mean(edge_centroids, axis=0)
+
+                # find the closest hint to the centroid
+                closest_hint = None
+                closest_distance = np.inf
+                for hint_index, hint in hints_for_pair:
+                    distance = np.linalg.norm(hint.edge_centroid - region_pair_centroid)
+                    if distance < closest_distance:
+                        closest_distance = distance
+                        closest_hint = (hint_index, hint)
+
+                filtered_hints.append(closest_hint)
+
+            # now try to add more hints, but only if they are sufficiently far apart
+            for hint_index, hint in enumerate(connector_hints):
+                if hint_index in [h[0] for h in filtered_hints]:
+                    continue
+                if all(
+                    np.linalg.norm(hint.edge_centroid - h.edge_centroid)
+                    >= min_connector_distance
+                    for h in [h[1] for h in filtered_hints]
+                ):
+                    filtered_hints.append((hint_index, hint))
+
+            connector_hints = [h[1] for h in filtered_hints]
 
         return sorted(
             connector_hints,
@@ -399,9 +468,12 @@ class MeshPartition:
             new_to_old_vertex_index_mapping[new_vertex_index] = old_vertex_index
 
         new_faces = {}
-        for new_face_index, face in enumerate(vertex_index_faces_of_region):
+        new_to_old_faces_index_mapping = {}
+        for new_face_index, old_face_index in enumerate(faces_of_region):
+            new_to_old_faces_index_mapping[new_face_index] = old_face_index
             new_faces[new_face_index] = tuple(
-                old_to_new_vertex_index_mapping[vertex_index] for vertex_index in face
+                old_to_new_vertex_index_mapping[vertex_index]
+                for vertex_index in vertex_index_faces_of_region[new_face_index]
             )
 
         new_vertices = {}
@@ -425,6 +497,8 @@ class MeshPartition:
             "vertexes": new_vertices,
             "faces": new_faces,
             "boundary_edges": boundary_edges_new,
+            "local_to_global_vertex_map": new_to_old_vertex_index_mapping,
+            "local_to_global_face_map": new_to_old_faces_index_mapping,
         }
 
         sorted_vertex_keys = list(sorted(maps["vertexes"].keys()))

@@ -51,6 +51,45 @@ def visualize_projected_edges_to_file(
     plt.close(fig)
 
 
+def test_get_submesh_maps():
+
+    points, _ = create_dodecahedron_geometry(1.0)
+
+    mesh = PartitionableSpheroidTriangleMesh.from_point_cloud(points)
+
+    partition = MeshPartition(mesh)
+    plane_point = np.array([0.0, 0.0, 0.0])
+    plane_normal = np.array([1.0, 0.0, 0.0])  # vertical yz-plane
+
+    new_partition = partition.perforate_and_split_region_by_plane(
+        region_id=0,
+        plane_point=plane_point,
+        plane_normal=plane_normal,
+    )
+
+    submesh_maps_0 = new_partition.get_submesh_maps(0)
+    submesh_maps_1 = new_partition.get_submesh_maps(1)
+
+    assert len(submesh_maps_0["faces"]) + len(submesh_maps_1["faces"]) == len(
+        new_partition.mesh.faces
+    ), "Total faces in submesh maps should equal total faces in mesh"
+
+    local_to_global_vertex_map_0 = submesh_maps_0["local_to_global_vertex_map"]
+    for local_face_idx, global_face_idx in submesh_maps_0[
+        "local_to_global_face_map"
+    ].items():
+
+        global_face = new_partition.mesh.faces[global_face_idx]
+
+        local_face = submesh_maps_0["faces"][local_face_idx]
+
+        global_vertices_of_local_face = [
+            local_to_global_vertex_map_0[v] for v in local_face
+        ]
+
+        assert tuple(global_face) == tuple(global_vertices_of_local_face)
+
+
 def test_perforated():
     points, _ = create_dodecahedron_geometry(1.0)
 
@@ -122,6 +161,8 @@ def test_merge_two_collinear_connector_hints():
         region_b=1,
         triangle_a_vertices=(a1, b1, apex_a1),
         triangle_b_vertices=(b1, a1, apex_b1),
+        triangle_a_vertex_indices=(0, 1, 2),
+        triangle_b_vertex_indices=(2, 1, 0),
         triangle_a_normal=normal,
         triangle_b_normal=normal,
         edge_vector=b1 - a1,
@@ -130,6 +171,8 @@ def test_merge_two_collinear_connector_hints():
         face_pair_ids=[(1, 1)],
         start_vertex=a1,
         end_vertex=b1,
+        start_vertex_index=0,
+        end_vertex_index=1,
     )
 
     ch2 = ConnectorHint(
@@ -137,6 +180,8 @@ def test_merge_two_collinear_connector_hints():
         region_b=1,
         triangle_a_vertices=(b1, b2, apex_a2),
         triangle_b_vertices=(b2, b1, apex_b2),
+        triangle_a_vertex_indices=(0, 1, 2),
+        triangle_b_vertex_indices=(2, 1, 0),
         triangle_a_normal=normal,
         triangle_b_normal=normal,
         edge_vector=b2 - b1,
@@ -145,6 +190,8 @@ def test_merge_two_collinear_connector_hints():
         face_pair_ids=[(2, 2)],
         start_vertex=b1,
         end_vertex=b2,
+        start_vertex_index=0,
+        end_vertex_index=1,
     )
 
     result = merge_collinear_connectors([ch1, ch2])
@@ -200,6 +247,8 @@ def test_merge_three_collinear_connector_hints():
         region_b=1,
         triangle_a_vertices=(a0, a1, apex_a1),
         triangle_b_vertices=(a1, a0, apex_b1),
+        triangle_a_vertex_indices=(0, 1, 2),
+        triangle_b_vertex_indices=(2, 1, 0),
         triangle_a_normal=normal,
         triangle_b_normal=normal,
         edge_vector=a1 - a0,
@@ -208,6 +257,8 @@ def test_merge_three_collinear_connector_hints():
         face_pair_ids=[(1, 1)],
         start_vertex=a0,
         end_vertex=a1,
+        start_vertex_index=0,
+        end_vertex_index=1,
     )
 
     ch2 = ConnectorHint(
@@ -215,6 +266,8 @@ def test_merge_three_collinear_connector_hints():
         region_b=1,
         triangle_a_vertices=(a1, a2, apex_a2),
         triangle_b_vertices=(a2, a1, apex_b2),
+        triangle_a_vertex_indices=(0, 1, 2),
+        triangle_b_vertex_indices=(2, 1, 0),
         triangle_a_normal=normal,
         triangle_b_normal=normal,
         edge_vector=a2 - a1,
@@ -223,6 +276,8 @@ def test_merge_three_collinear_connector_hints():
         face_pair_ids=[(2, 2)],
         start_vertex=a1,
         end_vertex=a2,
+        start_vertex_index=0,
+        end_vertex_index=1,
     )
 
     ch3 = ConnectorHint(
@@ -230,6 +285,8 @@ def test_merge_three_collinear_connector_hints():
         region_b=1,
         triangle_a_vertices=(a2, a3, apex_a3),
         triangle_b_vertices=(a3, a2, apex_b3),
+        triangle_a_vertex_indices=(0, 1, 2),
+        triangle_b_vertex_indices=(2, 1, 0),
         triangle_a_normal=normal,
         triangle_b_normal=normal,
         edge_vector=a3 - a2,
@@ -238,6 +295,8 @@ def test_merge_three_collinear_connector_hints():
         face_pair_ids=[(3, 3)],
         start_vertex=a2,
         end_vertex=a3,
+        start_vertex_index=0,
+        end_vertex_index=1,
     )
 
     result = merge_collinear_connectors([ch1, ch2, ch3])
@@ -278,6 +337,8 @@ def make_connector_hint(start, end, fid):
         region_b=1,
         triangle_a_vertices=(start, end, apex_a),
         triangle_b_vertices=(end, start, apex_b),
+        triangle_a_vertex_indices=(0, 1, 2),
+        triangle_b_vertex_indices=(2, 1, 0),
         triangle_a_normal=normal,
         triangle_b_normal=normal,
         edge_vector=end - start,
@@ -286,6 +347,8 @@ def make_connector_hint(start, end, fid):
         face_pair_ids=[(fid, fid)],
         start_vertex=start,
         end_vertex=end,
+        start_vertex_index=0,
+        end_vertex_index=1,
     )
 
 
@@ -368,12 +431,16 @@ def test_merge_connector_hints_tetrahedron():
                 np.array([-14.72, -15.16, 15.16]),
                 np.array([15.59, 15.16, 15.16]),
             ),
+            triangle_a_vertex_indices=(0, 1, 2),
+            triangle_b_vertex_indices=(2, 1, 0),
             triangle_a_normal=np.array([-0.58, -0.58, -0.58]),
             triangle_b_normal=np.array([-0.58, 0.58, 0.58]),
             edge_vector=np.array([0.0, 0.71, -0.71]),
             edge_centroid=np.array([-14.72, 0.0, 0.0]),
             start_vertex=np.array([-14.72, -15.16, 15.16]),
             end_vertex=np.array([-14.72, 15.16, -15.16]),
+            start_vertex_index=1,
+            end_vertex_index=2,
             original_edges=[],
             face_pair_ids=[],
         ),
@@ -390,12 +457,16 @@ def test_merge_connector_hints_tetrahedron():
                 np.array([14.72, 0.0, 0.0]),
                 np.array([14.72, 14.07, 14.07]),
             ),
+            triangle_a_vertex_indices=(0, 1, 2),
+            triangle_b_vertex_indices=(2, 1, 0),
             triangle_a_normal=np.array([0.58, -0.58, 0.58]),
             triangle_b_normal=np.array([0.58, -0.58, 0.58]),
             edge_vector=np.array([-0.82, -0.41, 0.41]),
             edge_centroid=np.array([0.65, -7.04, 7.04]),
             start_vertex=np.array([14.72, 0.0, 0.0]),
             end_vertex=np.array([-13.42, -14.07, 14.07]),
+            start_vertex_index=1,
+            end_vertex_index=2,
             original_edges=[],
             face_pair_ids=[],
         ),
@@ -412,12 +483,16 @@ def test_merge_connector_hints_tetrahedron():
                 np.array([14.72, 14.07, 14.07]),
                 np.array([14.72, 0.0, 0.0]),
             ),
+            triangle_a_vertex_indices=(0, 1, 2),
+            triangle_b_vertex_indices=(1, 2, 0),
             triangle_a_normal=np.array([0.58, 0.58, -0.58]),
             triangle_b_normal=np.array([0.58, 0.58, -0.58]),
             edge_vector=np.array([0.82, -0.41, 0.41]),
             edge_centroid=np.array([0.65, 7.04, -7.04]),
             start_vertex=np.array([-13.42, 14.07, -14.07]),
             end_vertex=np.array([14.72, 0.0, 0.0]),
+            start_vertex_index=1,
+            end_vertex_index=2,
             original_edges=[],
             face_pair_ids=[],
         ),

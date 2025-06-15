@@ -223,7 +223,7 @@ class TransformedRegionView:
         return hits
 
     def compute_transformed_connector_hints(
-        self, shell_thickness, merge_connectors=False
+        self, shell_thickness, merge_connectors=False, min_connector_distance=None
     ):
         """
         Compute connector hints for this transformed region view.
@@ -242,13 +242,44 @@ class TransformedRegionView:
         """
 
         connector_hints = self.partition.compute_connector_hints(
-            shell_thickness, merge_connectors
+            shell_thickness,
+            merge_connectors,
+            min_connector_distance=min_connector_distance,
         )
         return [
             transform_connector_hint(h, self.transform)
             for h in connector_hints
             if h.region_a == self.region_id or h.region_b == self.region_id
         ]
+
+    def average_normal_at_vertex(self, vertex_index: int) -> np.ndarray:
+        """
+        Compute the average normal vector at a vertex in the transformed region.
+
+        Parameters:
+        -----------
+        vertex_index : int
+            Index of the vertex in the region.
+        Returns:
+        --------
+        np.ndarray
+            Average normal vector at the vertex.
+        """
+
+        faces_at_vertex = self.face_indices_of_vertex_index_set([vertex_index])
+        if not faces_at_vertex:
+
+            raise ValueError(
+                f"Vertex index {vertex_index} is not part of any face in the region."
+            )
+
+        face_normals = []
+        for face_index in faces_at_vertex:
+            face_normals.append(self.face_normal(face_index))
+
+        face_normals = np.array(face_normals)
+
+        return normalize(np.mean(face_normals, axis=0))
 
     def face_centroid(self, face_index: int) -> np.ndarray:
         """
@@ -303,6 +334,28 @@ class TransformedRegionView:
         n = np.cross(b - a, c - a)
 
         return normalize(n)
+
+    def face_vertices(self, face_index: int) -> np.ndarray:
+        """
+        Get the vertices of a face in the transformed region.
+
+        Parameters:
+        -----------
+        face_index : int
+            Index of the face in the region.
+
+        Returns:
+        --------
+        np.ndarray
+            Array of vertices for the specified face.
+        """
+        V, F, _ = self.get_transformed_vertices_faces_boundary_edges()
+        if face_index < 0 or face_index >= len(F):
+            raise ValueError(
+                f"face_index {face_index} is out of bounds for region with {len(F)} faces."
+            )
+        face = F[face_index]
+        return np.array([V[i] for i in face])
 
     def lay_flat(self, definition_of_low: float = 1) -> "TransformedRegionView":
         """
@@ -745,7 +798,7 @@ class TransformedRegionView:
             return best_view
 
     def lay_flat_on_boundary_edges_for_printability(
-        self, angle_threshold_rad=np.radians(45)
+        self, angle_threshold_rad=np.radians(45), desired_region_pairs=None
     ):
         """
         Try to lay flat all non-collinear pairs of boundary edges by rotating the region
@@ -792,11 +845,51 @@ class TransformedRegionView:
         edge_walk_is_closed = edge_walk[0][0] == edge_walk[-1][1]
         print(f"Edge walk: {edge_walk}, is closed: {edge_walk_is_closed}")
 
+        submesh_maps = self.partition.get_submesh_maps(self.region_id)
+        local_to_global_vertex_map = submesh_maps["local_to_global_vertex_map"]
+
+        if desired_region_pairs is not None:
+            desired_region_pairs = set(
+                tuple(sorted(pair)) for pair in desired_region_pairs
+            )
+
+        all_edge_regions = set()
+        for (i1, j1), (i2, j2) in combinations(edge_walk, 2):
+
+            global_i1 = local_to_global_vertex_map[i1]
+            global_j1 = local_to_global_vertex_map[j1]
+
+            edge_regions = self.partition.find_regions_of_edge((global_i1, global_j1))
+            assert len(edge_regions) == 2
+
+            all_edge_regions.add(tuple(sorted(edge_regions)))
+
+        print(f"Edge regions: {all_edge_regions}")
+
         best_score = 0.0
         best_view = None
+        best_region_pair = None
         found_candidate = False
 
         for (i1, j1), (i2, j2) in combinations(edge_walk, 2):
+
+            global_i1 = local_to_global_vertex_map[i1]
+            global_j1 = local_to_global_vertex_map[j1]
+
+            edge_regions = self.partition.find_regions_of_edge((global_i1, global_j1))
+
+            assert (
+                self.region_id in edge_regions
+            ), f"Edge ({global_i1}, {global_j1}) is not in region {self.region_id}."
+            assert len(edge_regions) == 2
+
+            if desired_region_pairs is not None:
+                if not tuple(sorted(edge_regions)) in desired_region_pairs:
+                    print(
+                        f"Skipping edge pair {edge_regions} as it is not in desired pairs."
+                    )
+                    continue
+
             p1, p2 = V[i1], V[j1]
             q1, q2 = V[i2], V[j2]
 
@@ -836,12 +929,19 @@ class TransformedRegionView:
 
             score = new_view.printability_score(angle_threshold_rad)
             if score > best_score:
-                print(f"New best printability score (edge-based): {score}")
+                print(
+                    f"New best printability score (edge-based): {score}, for region pair  {edge_regions}"
+                )
                 best_score = score
                 best_view = new_view
+                best_region_pair = edge_regions
 
         if not found_candidate:
             print("No suitable edge pairs found for laying flat.")
+        else:
+            print(
+                f"Best printability score (edge-based): {best_score}, for region pair {best_region_pair}"
+            )
 
         return best_view if best_view is not None else self
 

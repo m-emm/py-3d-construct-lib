@@ -11,6 +11,7 @@ parent_dir = str(Path(freecad_utils_path).parent)
 if parent_dir not in sys.path:
     sys.path.insert(0, parent_dir)
 
+from py_3d_construct_lib.construct_utils import fibonacci_sphere
 from py_3d_construct_lib.spherical_tools import (
     cartesian_to_spherical_jackson,
     filter_outside_spherical_cap,
@@ -71,7 +72,7 @@ parameters_m = {
     },
     "brow_top_factor": 1.3,
     "aspect_ratio": 0.6,
-    "x_squeeze": 0.6,
+    "x_squeeze": 0.65,
     "z_squeeze": 0.8,
 }
 
@@ -420,10 +421,8 @@ def face_point_cloud(face_key):
     theta_flat = theta_grid.ravel()
     phi_flat = phi_grid.ravel()
 
-    grid_on_unit_sphere = [
-        spherical_to_cartesian_jackson((1, theta, phi))
-        for theta, phi in zip(theta_flat, phi_flat)
-    ]
+    grid_on_unit_sphere = fibonacci_sphere(int(n_theta * n_phi / 3))
+
     grid_on_unit_sphere_spherical = [
         cartesian_to_spherical_jackson(v) for v in grid_on_unit_sphere
     ]
