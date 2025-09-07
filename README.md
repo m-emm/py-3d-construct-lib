@@ -209,6 +209,93 @@ The generated STL files can be:
 - Imported into CAD software for further editing
 - Used as reference models for other applications
 
+![Face Mesh Example](examples/Face.png)
+*Example of generated face mesh viewed in a 3D viewer*
+
+### Cylinder Mesh Creation and Merging
+
+The `examples/create_cylinder_stl.py` script demonstrates a simple yet powerful workflow for creating cylindrical meshes from point clouds and merging multiple cylinders into a single STL file.
+
+#### Features
+
+- **Parametric Cylinder Generation**: Creates cylinder point clouds with configurable radius, height, and resolution
+- **Point Cloud to Mesh**: Converts scattered 3D points to triangulated meshes using convex hull triangulation
+- **Mesh Merging**: Combines multiple cylinder meshes with vertex deduplication 
+- **Direct STL Export**: Exports complete solid meshes (not hollow shells) ready for viewing or processing
+- **Multiple Cylinder Array**: Demonstrates creating arrays of cylinders positioned side-by-side
+
+#### Usage
+
+```bash
+cd examples
+python create_cylinder_stl.py
+```
+
+This will generate `output/cylinder_mesh.stl` containing an array of 4 cylinders.
+
+#### Example Output
+
+```
+Creating cylinder mesh...
+Step 1: Generating cylinder point cloud...
+Generated 485 points for cylinder (radius=5.0mm, height=60.0mm)
+Step 2: Creating triangulated mesh...
+Created mesh with 485 vertices and 966 faces
+Step 3: Creating mesh partition...
+Created partition with 966 faces in region 0
+Step 4: Exporting mesh as STL...
+Successfully exported cylinder mesh to: output/cylinder_mesh.stl
+Mesh statistics:
+  - Vertices: 1940
+  - Triangles: 3864
+  - Dimensions: 140.0 x 10.0 x 60.0 mm
+  - Bounds: X[-5.0, 135.0] Y[-5.0, 5.0] Z[0.0, 60.0]
+```
+
+#### Key Concepts Demonstrated
+
+1. **Point Cloud Generation**: Creates structured point distributions on cylindrical surfaces
+2. **Mesh Triangulation**: Uses `PartitionableSpheroidTriangleMesh.from_point_cloud()` for automatic triangulation
+3. **Mesh Transformation**: Applies translations to create multiple positioned cylinders
+4. **Mesh Merging**: Uses `merge_meshes()` function to combine meshes with tolerance-based vertex merging
+5. **STL Export**: Direct export of complete solid geometry using `write_stl_binary()`
+
+#### Configuration Options
+
+The example can be easily modified by adjusting parameters:
+
+```python
+# Cylinder dimensions
+radius = 5.0        # Cylinder radius in mm
+height = 60.0       # Cylinder height in mm
+
+# Point cloud resolution
+angular_resolution = 80     # Points around circumference
+num_vertical = 2           # Vertical layers on sides
+num_top_bottom = 2         # Concentric circles on ends
+
+# Array configuration
+num_cylinders = 4          # Number of cylinders in array
+spacing = radius * 2 + 10  # Spacing between cylinders
+```
+
+#### Applications
+
+- **Mechanical Design**: Creating arrays of pins, rods, or supports
+- **3D Printing**: Generating test pieces or mechanical components
+- **Educational**: Learning mesh generation and manipulation techniques
+- **Prototyping**: Quick creation of cylindrical geometry for testing
+- **CAD Integration**: Generating meshes for import into CAD software
+
+The resulting STL files are compatible with:
+- 3D printing slicers (Cura, PrusaSlicer, etc.)
+- Mesh viewers (MeshLab, 3D Builder, Blender)
+- CAD software for further modification
+- Analysis tools for geometric verification
+
+![Cylinder Array Example](examples/cylinders.png)
+*Example of generated cylinder array mesh viewed in a 3D viewer*
+
 ## Module Overview
 
 | Module | Description |
