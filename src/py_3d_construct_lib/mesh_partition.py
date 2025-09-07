@@ -362,8 +362,29 @@ class MeshPartition:
 
         return sorted(regions)
 
+    def find_local_vertex_ids_by_label(self, vertex_label: str, region_id: int):
+        """
+        Returns the local vertex index in the specified region for the vertex with the given label.
+        If the vertex is not found in the region, returns None.
+        """
+
+        submesh_maps = self.get_submesh_maps(region_id)
+
+        global_vertex_indices = self.mesh.get_vertices_by_label(vertex_label)
+        local_vertex_indices = [
+            submesh_maps["global_to_local_vertex_map"][v]
+            for v in global_vertex_indices
+            if v in submesh_maps["global_to_local_vertex_map"]
+        ]
+
+        return local_vertex_indices
+
     def compute_connector_hints(
-        self, shell_thickness, merge_connectors=False, min_connector_distance=None
+        self,
+        shell_thickness,
+        merge_connectors=False,
+        min_connector_distance=None,
+        min_corner_distance=None,
     ) -> list[ConnectorHint]:
         shell_maps, vertex_index_map = self.mesh.calculate_materialized_shell_maps(
             shell_thickness
@@ -390,6 +411,11 @@ class MeshPartition:
         corner_vertices = {
             v for v, regions in vertex_regions.items() if len(regions) > 2
         }
+        corner_vertex_coordinates = np.array(
+            [self.mesh.vertices[v] for v in corner_vertices]
+        )
+
+        print(f"There are {len(corner_vertices)} corner vertices.")
 
         connector_hints = [
             hint
@@ -398,7 +424,21 @@ class MeshPartition:
             and not any(v in corner_vertices for v in hint.triangle_b_vertex_indices)
         ]
 
-        if min_connector_distance is not None:
+        if min_corner_distance is not None:
+
+            connector_hints = [
+                hint
+                for hint in connector_hints
+                if all(
+                    np.linalg.norm(hint.edge_centroid - corner_vertex)
+                    >= min_corner_distance
+                    for corner_vertex in corner_vertex_coordinates
+                )
+            ]
+
+        if (min_connector_distance is not None) or (min_corner_distance is not None):
+            if min_connector_distance is None:
+                min_connector_distance = 0  # no limit for connector distance
             filtered_hints = []
 
             hints_by_region_pair = defaultdict(list)
@@ -424,15 +464,28 @@ class MeshPartition:
 
                 filtered_hints.append(closest_hint)
 
-            # now try to add more hints, but only if they are sufficiently far apart
+            # now try to add more hints, but only if they are sufficiently far apart and not too close to corners
             for hint_index, hint in enumerate(connector_hints):
                 if hint_index in [h[0] for h in filtered_hints]:
                     continue
-                if all(
+                far_enough_from_others = all(
                     np.linalg.norm(hint.edge_centroid - h.edge_centroid)
                     >= min_connector_distance
                     for h in [h[1] for h in filtered_hints]
-                ):
+                )
+                far_enough_from_corners = (
+                    True
+                    if min_corner_distance is None
+                    else all(
+                        np.linalg.norm(hint.edge_centroid - corner_vertex)
+                        >= min_corner_distance
+                        for corner_vertex in corner_vertex_coordinates
+                    )
+                )
+                if not far_enough_from_corners:
+                    print(f"Skipping hint {hint_index} due to corner proximity.")
+
+                if far_enough_from_others and far_enough_from_corners:
                     filtered_hints.append((hint_index, hint))
 
             connector_hints = [h[1] for h in filtered_hints]
@@ -498,6 +551,8 @@ class MeshPartition:
             "faces": new_faces,
             "boundary_edges": boundary_edges_new,
             "local_to_global_vertex_map": new_to_old_vertex_index_mapping,
+            "local_to_global_face_map": new_to_old_faces_index_mapping,
+            "global_to_local_vertex_map": old_to_new_vertex_index_mapping,
             "local_to_global_face_map": new_to_old_faces_index_mapping,
         }
 

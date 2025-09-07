@@ -3,6 +3,7 @@ from py_3d_construct_lib.construct_utils import is_valid_rigid_transform
 from py_3d_construct_lib.spherical_tools import (
     cartesian_to_spherical_jackson,
     coordinate_system_transform,
+    coordinate_system_transformation_function,
     create_shell_triangle_geometry,
     matrix_to_coordinate_system_transform,
     ray_triangle_intersect,
@@ -58,3 +59,60 @@ def test_ray_triangle_intersect():
     assert np.allclose(
         intersection_point, [0.5, 0.5, 0.0]
     ), "Intersection point mismatch"
+
+
+class Rotated:
+    def __init__(self, object, angle, axis):
+        self.object = object
+        self.angle = angle
+        self.axis = axis
+
+    def __repr__(self):
+        return f"Rotated({self.object}, {self.angle}, {self.axis})"
+
+
+class Translated:
+
+    def __init__(self, object, x, y, z):
+        self.object = object
+        self.x = x
+        self.y = y
+        self.z = z
+
+    def __repr__(self):
+        return f"Translated({self.object}, {self.x}, {self.y}, {self.z})"
+
+
+def test_coordinate_system_transformation_function():
+
+    origin_a = (0, 0, 0)
+    up_a = (0, 0, 1)
+    out_a = (1, 0, 0)
+    origin_b = [-91.34176083, 62.75628474, 100.00960039]
+    up_b = (1, 0, 0)
+    out_b = [-0.85301514, 0.08469599, 0.51496773]
+
+    def rotation_function_generator(angle, axis):
+        def retval(x):
+            return Rotated(x, angle, axis)
+
+        return retval
+
+    def translation_function_generator(x, y, z):
+        def retval(obj):
+            return Translated(obj, x, y, z)
+
+        return retval
+
+    cstf = coordinate_system_transformation_function(
+        origin_a,
+        up_a,
+        out_a,
+        origin_b,
+        up_b,
+        out_b,
+        rotation_function_generator,
+        translation_function_generator,
+    )
+
+    print(cstf("object"))

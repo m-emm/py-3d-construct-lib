@@ -193,14 +193,16 @@ def build_face_cap_grid_with_deltas(parameters_to_use, outer_deltar=0):
 
     rho = face_overall_size
     alphas = [np.radians(a) for a in [90, 135, 165, 225, 270]]
-    for alpha in alphas:
+    for outer_point_number, alpha in enumerate(alphas):
 
         deltar = outer_deltar if np.degrees(alpha) < 200 else par.jaw_protrusion
         x_ = rho * np.cos(alpha) * aspect_ratio
         y_ = rho * np.sin(alpha)
-        add_point(points, (x_, y_, deltar))
+        add_point(points, (x_, y_, deltar), f"outer_point_{outer_point_number}")
         if abs(x_) > 1e-3:
-            add_point(points, (-x_, y_, deltar))
+            add_point(
+                points, (-x_, y_, deltar), f"outer_point_{outer_point_number}_neg"
+            )
 
     add_point(points, (0, 0, par.nose_length), "nose_tip")
     add_point(points, (0, par.nose_bottom_y, 0), "nose_bottom")
@@ -411,7 +413,7 @@ def face_point_cloud(face_key):
     ]
     cap_theta_phi = np.array([(rtp[1], rtp[2]) for rtp in spherical_unit_sphere_coords])
 
-    n_theta = 20  # azimuth (around Z, like longitude)
+    n_theta = 24  # azimuth (around Z, like longitude)
     n_phi = int(n_theta * 0.4)  # inclination (from +Z pole to -Z)
 
     theta = np.linspace(-np.pi, np.pi, n_theta)

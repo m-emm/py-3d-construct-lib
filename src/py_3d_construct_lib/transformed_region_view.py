@@ -197,6 +197,11 @@ class TransformedRegionView:
                 close_vertices.append(i)
         return close_vertices
 
+    def find_local_vertex_ids_by_label(self, vertex_label: str):
+        return self.partition.find_local_vertex_ids_by_label(
+            vertex_label, self.region_id
+        )
+
     def face_indices_of_vertex_index_set(self, vertex_indices):
         _, F, _ = self.get_transformed_vertices_faces_boundary_edges()
         face_indices = set()
@@ -223,7 +228,11 @@ class TransformedRegionView:
         return hits
 
     def compute_transformed_connector_hints(
-        self, shell_thickness, merge_connectors=False, min_connector_distance=None
+        self,
+        shell_thickness,
+        merge_connectors=False,
+        min_connector_distance=None,
+        min_corner_distance=None,
     ):
         """
         Compute connector hints for this transformed region view.
@@ -245,6 +254,7 @@ class TransformedRegionView:
             shell_thickness,
             merge_connectors,
             min_connector_distance=min_connector_distance,
+            min_corner_distance=min_corner_distance,
         )
         return [
             transform_connector_hint(h, self.transform)
