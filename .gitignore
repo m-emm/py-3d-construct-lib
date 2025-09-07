@@ -54,3 +54,4 @@ MANIFEST
 .python-version
 /artifacts
 output
+face_stl_output

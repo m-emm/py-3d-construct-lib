@@ -45,6 +45,56 @@ def calc_edge_to_triangle_map(triangles):
 
 
 def propagate_consistent_winding(triangles):
+    """
+    Propagate consistent winding order across all triangles in a mesh using breadth-first traversal.
+
+    This function ensures that all triangles in a mesh have consistent vertex winding order
+    (all clockwise or all counter-clockwise) by propagating the winding direction from a
+    starting triangle to its neighbors through shared edges. This is essential for ensuring
+    consistent surface normal directions in 3D meshes.
+
+    Algorithm Overview:
+    1. Start with triangle 0 as the reference winding direction
+    2. Use breadth-first search to traverse all connected triangles
+    3. For each shared edge between current and neighbor triangles:
+       - If the edge appears in the same direction in both triangles, flip the neighbor
+       - If the edge appears in opposite directions, keep the neighbor unchanged
+    4. Continue until all connected triangles are processed
+
+    Args:
+        triangles (array-like): Collection of triangles, where each triangle is represented
+                              as a sequence of 3 vertex indices [v0, v1, v2]. The input
+                              can be a numpy array, list of lists, or any nested sequence.
+
+    Returns:
+        numpy.ndarray: Array of triangles with consistent winding order. The output has
+                      the same shape as the input but with corrected vertex ordering.
+                      Triangle 0 retains its original winding direction, and all other
+                      triangles are adjusted to maintain consistency.
+
+    Implementation Details:
+        - Uses an edge-to-triangle mapping for efficient neighbor lookup
+        - Employs breadth-first search to ensure systematic propagation
+        - Handles disconnected mesh components by starting from triangle 0
+        - Preserves the original winding direction of the first triangle
+        - Shared edges must appear in opposite directions for consistent winding
+
+    Edge Direction Logic:
+        For two triangles sharing an edge (a,b):
+        - If both triangles traverse the edge as (a→b), they have the same winding
+        - If one traverses (a→b) and the other (b→a), they have opposite winding
+        - Consistent winding requires opposite edge directions between neighbors
+
+    Example:
+        >>> triangles = [[0, 1, 2], [1, 3, 2], [2, 3, 4]]
+        >>> consistent = propagate_consistent_winding(triangles)
+        >>> # Result ensures all triangles have consistent surface normal direction
+
+    Note:
+        This function assumes the mesh is manifold (each edge shared by at most 2 triangles).
+        For non-manifold meshes, the behavior is undefined and may not produce the expected
+        consistent winding across all components.
+    """
     triangles = [list(tri) for tri in triangles]
     edge_to_tri = calc_edge_to_triangle_map(triangles)
 
@@ -138,6 +188,78 @@ def shrink_triangle(A, B, C, border_width, epsilon=1e-6):
 
 
 class PartitionableSpheroidTriangleMesh:
+    """
+    A sophisticated 3D triangle mesh class designed for spheroidal geometries with advanced partitioning capabilities.
+
+    This class represents a triangulated mesh specifically optimized for spheroidal surfaces that can be
+    partitioned, perforated, and manipulated for 3D printing and manufacturing applications. It provides
+    comprehensive mesh validation, geometric operations, and shell generation capabilities.
+
+    Key Features:
+    ------------
+    - **Mesh Validation**: Ensures consistent vertex winding, manifold topology, and geometric validity
+    - **Shell Generation**: Creates thick-walled shells from surface meshes for 3D printing
+    - **Perforation Operations**: Supports cutting holes using planes and cylinders
+    - **Vertex Management**: Maintains labeled vertices with topological relationships
+    - **Spherical Projection**: Specialized handling of spheroidal coordinate transformations
+    - **Quality Control**: Prevents degenerate triangles and maintains mesh integrity
+
+    Mesh Properties:
+    ---------------
+    - All faces must be triangles (3 vertices each)
+    - Consistent outward-facing normal vectors
+    - Manifold topology (each edge shared by exactly 2 triangles)
+    - No degenerate triangles (area above threshold)
+    - Labeled vertices for tracking mesh modifications
+
+    Coordinate Systems:
+    ------------------
+    - Cartesian coordinates for vertex positions
+    - Spherical coordinates (r, theta, phi) for radial operations
+    - Barycentric coordinates for interior point placement
+    - Cylindrical coordinates for specialized projections
+
+    Manufacturing Applications:
+    --------------------------
+    - 3D printable shell generation with controllable thickness
+    - Perforation for mounting holes, ventilation, or weight reduction
+    - Mesh partitioning for multi-part assemblies
+    - Surface area and volume calculations
+    - Quality validation for manufacturing constraints
+
+    Typical Workflow:
+    ----------------
+    1. Create mesh from point cloud or existing geometry
+    2. Validate mesh topology and fix winding issues
+    3. Apply perforations or modifications as needed
+    4. Generate shell geometry for 3D printing
+    5. Export to manufacturing formats (STL, OBJ, etc.)
+
+    Examples:
+    ---------
+    >>> # Create from point cloud
+    >>> points = generate_sphere_points(100)
+    >>> mesh = PartitionableSpheroidTriangleMesh.from_point_cloud(points)
+    >>>
+    >>> # Generate shell for 3D printing
+    >>> shell_maps, vertex_map = mesh.calculate_materialized_shell_maps(
+    ...     shell_thickness=2.0, shrinkage=0.1
+    ... )
+    >>>
+    >>> # Add perforation
+    >>> perforated_mesh, face_mapping = mesh.perforate_with_cylinder(
+    ...     bottom_point=[0, 0, -10], axis_direction=[0, 0, 1],
+    ...     height=20, radius=3.0
+    ... )
+
+    See Also:
+    ---------
+    - `from_point_cloud`: Create mesh from scattered 3D points
+    - `calculate_materialized_shell_maps`: Generate 3D printable shells
+    - `perforate_with_cylinder`: Add cylindrical holes
+    - `add_vertex_in_face`: Subdivide triangles for refinement
+    """
+
     def __init__(self, vertices, faces, vertex_labels=None):
         self.vertices = np.array(vertices, dtype=np.float64)
         self.faces = np.array(faces)
@@ -166,7 +288,7 @@ class PartitionableSpheroidTriangleMesh:
         for canonical_edge, edges in edges_by_canoncial_edge.items():
             if len(edges) != 2:
                 raise ValueError(
-                    f"Edge {canonical_edge} appears {len(edges)} times, expected 2"
+                    f"Edge {canonical_edge} appears {len(edges)} times, ected 2"
                 )
             assert edges[0] == (
                 edges[1][1],

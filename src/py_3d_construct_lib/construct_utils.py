@@ -452,6 +452,49 @@ def select_uniform_cylindrical_vertices(
     min_vertex_distance=20.0,
     allowed_unsupported_height=60.0,
 ):
+    """
+    Select a uniform distribution of vertices from a roughly cylindrical point cloud.
+
+    This function takes a 3D point cloud and selects a subset of vertices that are
+    uniformly distributed across the cylindrical surface. It transforms the vertices
+    into a cylindrical coordinate system (z, theta) and uses recursive spatial
+    subdivision to ensure uniform sampling while maintaining minimum distances
+    between selected points.
+
+    The algorithm:
+    1. Converts 3D vertices to cylindrical coordinates (z, theta) relative to the cylinder axis
+    2. Filters vertices based on height and angular constraints
+    3. Uses recursive quadtree-like subdivision in (z, theta) space
+    4. Selects corner points and center points from each subdivision region
+    5. Enforces minimum distance constraints between selected vertices
+
+    Args:
+        vertices (array-like): Input vertices as (N, 3) array of 3D points [x, y, z]
+        cylinder_center_xy (array-like): Center of cylinder in XY plane as [x, y]
+        min_vertex_distance (float, optional): Minimum distance between selected
+            vertices in the transformed (z, theta) space. Defaults to 20.0.
+        allowed_unsupported_height (float, optional): Minimum Z height to consider
+            for vertex selection (filters out low vertices). Defaults to 60.0.
+
+    Returns:
+        np.ndarray: Selected vertices as (M, 3) array where M <= N, containing
+            the uniformly distributed subset of input vertices
+
+    Notes:
+        - The function assumes vertices roughly follow a cylindrical distribution
+        - Angular coordinates are scaled by mean radius for uniform spacing
+        - A 10% margin is applied to angular bounds to avoid edge effects
+        - The recursive subdivision stops when regions become smaller than min_vertex_distance
+        - Corner and center point selection ensures good spatial coverage
+
+    Example:
+        >>> vertices = np.random.rand(1000, 3) * 100  # Random 3D points
+        >>> center = np.array([50, 50])  # Cylinder center in XY
+        >>> selected = select_uniform_cylindrical_vertices(
+        ...     vertices, center, min_vertex_distance=15.0, allowed_unsupported_height=40.0
+        ... )
+        >>> print(f"Selected {len(selected)} from {len(vertices)} vertices")
+    """
     points = np.array(vertices)
 
     radii = np.linalg.norm(points[:, :2] - cylinder_center_xy, axis=1)

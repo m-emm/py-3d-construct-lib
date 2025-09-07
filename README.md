@@ -147,6 +147,68 @@ from py_3d_construct_lib.construct_utils import fibonacci_sphere
 points = fibonacci_sphere(num_points=100, radius=1.0)
 ```
 
+## Examples
+
+### Face Mesh STL Export
+
+The `examples/create_face_stl.py` script demonstrates how to create 3D printable face meshes from point clouds and export them as STL files. This example showcases the complete workflow from point cloud generation to ready-to-print 3D models.
+
+#### Features
+
+- **Face Point Cloud Generation**: Creates anatomically accurate face point clouds
+- **Mesh Triangulation**: Converts point clouds to triangulated meshes
+- **3D Printing Optimization**: Scales models to 200mm width with 2.5mm shell thickness
+- **Front/Back Partitioning**: Splits faces into mask-like front and back halves
+- **STL Export**: Generates ready-to-print STL files
+
+#### Usage
+
+```bash
+cd examples
+python create_face_stl.py
+```
+
+This will generate STL files in the `face_stl_output/` directory:
+- `face_m_front.stl` - Front half (mask exterior)
+- `face_m_back.stl` - Back half (mask interior) 
+- `face_m_complete.stl` - Complete face model
+
+#### Example Output
+
+```
+🎭 Face Mesh STL Export Example
+================================
+Creating face mesh for face type 'm'...
+Step 1: Generating face point cloud...
+Generated 113 points
+Step 2: Creating triangulated mesh...
+Created mesh with 113 vertices and 222 faces
+Step 2.5: Scaling mesh for 3D printing...
+Original dimensions: 0.2844 x 0.4400 x 0.3939 units
+Scaling by factor 454.55 to make longest side 200.0mm
+Scaled dimensions: 129.3 x 200.0 x 179.0 mm
+Step 3: Partitioning mesh...
+Partitioning at Z = 26.51mm (front/back split for mask)
+Step 4: Creating mesh partition...
+Front region (ID 0): 159 faces (mask exterior)
+Back region (ID 1): 133 faces (mask interior)
+Step 5: Generating 3D printable shells...
+✅ Success! Generated STL files in 'face_stl_output' directory
+```
+
+#### Applications
+
+- **3D Printing**: Ready-to-print face models and masks
+- **Prototyping**: Rapid face geometry prototyping
+- **Research**: Facial geometry analysis and visualization
+- **Art/Design**: Creative face-based sculptures and models
+
+The generated STL files can be:
+- Viewed in STL viewers (MeshLab, 3D Builder, online viewers)
+- 3D printed with any FDM or SLA printer
+- Imported into CAD software for further editing
+- Used as reference models for other applications
+
 ## Module Overview
 
 | Module | Description |
