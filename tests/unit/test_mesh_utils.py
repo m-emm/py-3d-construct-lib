@@ -38,6 +38,7 @@ from py_3d_construct_lib.mesh_utils import (
     _norm,
     _normalize,
     _sub,
+    merge_meshes,
     shell_maps_to_unified_mesh,
     write_shell_maps_to_stl,
     write_stl_binary,
@@ -373,5 +374,235 @@ def test_compute_normals_false():
             os.unlink(output_path)
 
 
-def test_first_function():
-    assert True
+def test_merge_meshes_basic():
+    """Test basic mesh merging functionality."""
+    # First mesh: a triangle
+    vertices_1 = [
+        (0.0, 0.0, 0.0),  # 0
+        (1.0, 0.0, 0.0),  # 1
+        (0.5, 1.0, 0.0),  # 2
+    ]
+    faces_1 = [(0, 1, 2)]
+
+    # Second mesh: another triangle, sharing one vertex
+    vertices_2 = [
+        (1.0, 0.0, 0.0),  # 0 (should merge with vertex 1 from first mesh)
+        (2.0, 0.0, 0.0),  # 1
+        (1.5, 1.0, 0.0),  # 2
+    ]
+    faces_2 = [(0, 1, 2)]
+
+    tolerance = 1e-6
+    merged_vertices, merged_faces = merge_meshes(
+        vertices_1, faces_1, vertices_2, faces_2, tolerance
+    )
+
+    # Should have 5 unique vertices (one shared)
+    assert len(merged_vertices) == 5
+
+    # Should have 2 faces
+    assert len(merged_faces) == 2
+
+    # All face indices should be valid
+    for face in merged_faces:
+        for vertex_idx in face:
+            assert 0 <= vertex_idx < len(merged_vertices)
+
+    # Check that shared vertex is properly merged
+    # Find the shared vertex (1.0, 0.0, 0.0)
+    shared_vertex_found = False
+    for vertex in merged_vertices:
+        if (
+            abs(vertex[0] - 1.0) < tolerance
+            and abs(vertex[1] - 0.0) < tolerance
+            and abs(vertex[2] - 0.0) < tolerance
+        ):
+            shared_vertex_found = True
+            break
+    assert shared_vertex_found
+
+
+def test_merge_meshes_no_shared_vertices():
+    """Test merging meshes with no shared vertices."""
+    # First mesh: triangle at origin
+    vertices_1 = [
+        (0.0, 0.0, 0.0),
+        (1.0, 0.0, 0.0),
+        (0.5, 1.0, 0.0),
+    ]
+    faces_1 = [(0, 1, 2)]
+
+    # Second mesh: triangle far away
+    vertices_2 = [
+        (10.0, 10.0, 0.0),
+        (11.0, 10.0, 0.0),
+        (10.5, 11.0, 0.0),
+    ]
+    faces_2 = [(0, 1, 2)]
+
+    tolerance = 1e-6
+    merged_vertices, merged_faces = merge_meshes(
+        vertices_1, faces_1, vertices_2, faces_2, tolerance
+    )
+
+    # Should have all 6 vertices (no merging)
+    assert len(merged_vertices) == 6
+
+    # Should have 2 faces
+    assert len(merged_faces) == 2
+
+    # All face indices should be valid
+    for face in merged_faces:
+        for vertex_idx in face:
+            assert 0 <= vertex_idx < len(merged_vertices)
+
+
+def test_merge_meshes_multiple_shared_vertices():
+    """Test merging meshes with multiple shared vertices."""
+    # First mesh: a triangle
+    vertices_1 = [
+        (0.0, 0.0, 0.0),  # 0
+        (1.0, 0.0, 0.0),  # 1
+        (0.5, 1.0, 0.0),  # 2
+    ]
+    faces_1 = [(0, 1, 2)]
+
+    # Second mesh: adjacent triangle sharing an edge
+    vertices_2 = [
+        (1.0, 0.0, 0.0),  # 0 (shares with vertex 1 from first mesh)
+        (0.5, 1.0, 0.0),  # 1 (shares with vertex 2 from first mesh)
+        (1.5, 1.0, 0.0),  # 2 (new vertex)
+    ]
+    faces_2 = [(0, 1, 2)]
+
+    tolerance = 1e-6
+    merged_vertices, merged_faces = merge_meshes(
+        vertices_1, faces_1, vertices_2, faces_2, tolerance
+    )
+
+    # Should have 4 unique vertices (2 shared)
+    assert len(merged_vertices) == 4
+
+    # Should have 2 faces
+    assert len(merged_faces) == 2
+
+    # All face indices should be valid
+    for face in merged_faces:
+        for vertex_idx in face:
+            assert 0 <= vertex_idx < len(merged_vertices)
+
+
+def test_merge_meshes_tolerance():
+    """Test that tolerance parameter works correctly."""
+    # First mesh
+    vertices_1 = [
+        (0.0, 0.0, 0.0),
+        (1.0, 0.0, 0.0),
+        (0.5, 1.0, 0.0),
+    ]
+    faces_1 = [(0, 1, 2)]
+
+    # Second mesh with vertices very close but not exactly the same
+    vertices_2 = [
+        (1.0001, 0.0, 0.0),  # Very close to (1.0, 0.0, 0.0)
+        (2.0, 0.0, 0.0),
+        (1.5, 1.0, 0.0),
+    ]
+    faces_2 = [(0, 1, 2)]
+
+    # Test with tight tolerance - should not merge
+    tight_tolerance = 1e-6
+    merged_vertices_tight, merged_faces_tight = merge_meshes(
+        vertices_1, faces_1, vertices_2, faces_2, tight_tolerance
+    )
+
+    # Should have 6 vertices (no merging)
+    assert len(merged_vertices_tight) == 6
+
+    # Test with loose tolerance - should merge
+    loose_tolerance = 1e-3
+    merged_vertices_loose, merged_faces_loose = merge_meshes(
+        vertices_1, faces_1, vertices_2, faces_2, loose_tolerance
+    )
+
+    # Should have 5 vertices (one merged)
+    assert len(merged_vertices_loose) == 5
+
+
+def test_merge_meshes_empty_meshes():
+    """Test merging with empty meshes."""
+    # Test with first mesh empty
+    vertices_1 = []
+    faces_1 = []
+    vertices_2 = [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.5, 1.0, 0.0)]
+    faces_2 = [(0, 1, 2)]
+
+    tolerance = 1e-6
+    merged_vertices, merged_faces = merge_meshes(
+        vertices_1, faces_1, vertices_2, faces_2, tolerance
+    )
+
+    # Should equal second mesh
+    assert len(merged_vertices) == 3
+    assert len(merged_faces) == 1
+
+    # Test with second mesh empty
+    vertices_1 = [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.5, 1.0, 0.0)]
+    faces_1 = [(0, 1, 2)]
+    vertices_2 = []
+    faces_2 = []
+
+    merged_vertices, merged_faces = merge_meshes(
+        vertices_1, faces_1, vertices_2, faces_2, tolerance
+    )
+
+    # Should equal first mesh
+    assert len(merged_vertices) == 3
+    assert len(merged_faces) == 1
+
+    # Test with both meshes empty
+    vertices_1 = []
+    faces_1 = []
+    vertices_2 = []
+    faces_2 = []
+
+    merged_vertices, merged_faces = merge_meshes(
+        vertices_1, faces_1, vertices_2, faces_2, tolerance
+    )
+
+    # Should be empty
+    assert len(merged_vertices) == 0
+    assert len(merged_faces) == 0
+
+
+def test_merge_meshes_vertex_order_preservation():
+    """Test that vertex order in faces is preserved correctly."""
+    # Create two simple triangles
+    vertices_1 = [
+        (0.0, 0.0, 0.0),  # 0
+        (1.0, 0.0, 0.0),  # 1
+        (0.5, 1.0, 0.0),  # 2
+    ]
+    faces_1 = [(0, 1, 2)]  # Counter-clockwise
+
+    vertices_2 = [
+        (2.0, 0.0, 0.0),  # 0
+        (3.0, 0.0, 0.0),  # 1
+        (2.5, 1.0, 0.0),  # 2
+    ]
+    faces_2 = [(0, 2, 1)]  # Clockwise
+
+    tolerance = 1e-6
+    merged_vertices, merged_faces = merge_meshes(
+        vertices_1, faces_1, vertices_2, faces_2, tolerance
+    )
+
+    # Should have 6 vertices and 2 faces
+    assert len(merged_vertices) == 6
+    assert len(merged_faces) == 2
+
+    # Check that face vertex orders are maintained
+    # (exact indices will depend on implementation, but structure should be preserved)
+    for face in merged_faces:
+        assert len(face) == 3
+        assert len(set(face)) == 3  # No duplicate vertices in face

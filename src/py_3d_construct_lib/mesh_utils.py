@@ -5,6 +5,7 @@ Minimal binary STL writer from plain Python lists.
 - triangles: list[tuple[int, int, int]]  (indices into vertices)
 """
 
+from heapq import merge
 from math import sqrt
 from struct import pack
 from typing import Any, Dict, Iterable, List, Sequence, Tuple
@@ -36,6 +37,66 @@ def _normalize(v: Vec3) -> Vec3:
         return (0.0, 0.0, 0.0)
     inv = 1.0 / n
     return (v[0] * inv, v[1] * inv, v[2] * inv)
+
+
+def merge_meshes(vertices_1, faces_1, vertices_2, faces_2, tol):
+    """
+    Merge two meshes, combining vertices that are within tolerance.
+
+    Args:
+        vertices_1: List of vertices for first mesh [(x, y, z), ...]
+        faces_1: List of faces for first mesh [(i0, i1, i2), ...]
+        vertices_2: List of vertices for second mesh [(x, y, z), ...]
+        faces_2: List of faces for second mesh [(i0, i1, i2), ...]
+        tol: Distance tolerance for merging vertices
+
+    Returns:
+        Tuple of (merged_vertices, merged_faces)
+    """
+    merged_vertices = []
+    merged_faces = []
+
+    # Map from (mesh_id, original_vertex_index) to new_vertex_index
+    vertex_index_map = {}
+
+    def find_or_add_vertex(vertex, mesh_id, original_index):
+        """Find existing vertex within tolerance or add new one."""
+        # Check if this vertex is close to any existing vertex
+        for i, existing_vertex in enumerate(merged_vertices):
+            dist_sq = (
+                (vertex[0] - existing_vertex[0]) ** 2
+                + (vertex[1] - existing_vertex[1]) ** 2
+                + (vertex[2] - existing_vertex[2]) ** 2
+            )
+            if dist_sq <= tol * tol:
+                vertex_index_map[(mesh_id, original_index)] = i
+                return i
+
+        # No close vertex found, add new one
+        new_index = len(merged_vertices)
+        merged_vertices.append(vertex)
+        vertex_index_map[(mesh_id, original_index)] = new_index
+        return new_index
+
+    # Process first mesh
+    for i, vertex in enumerate(vertices_1):
+        find_or_add_vertex(vertex, 1, i)
+
+    # Process second mesh
+    for i, vertex in enumerate(vertices_2):
+        find_or_add_vertex(vertex, 2, i)
+
+    # Process faces from first mesh
+    for face in faces_1:
+        new_face = tuple(vertex_index_map[(1, vertex_idx)] for vertex_idx in face)
+        merged_faces.append(new_face)
+
+    # Process faces from second mesh
+    for face in faces_2:
+        new_face = tuple(vertex_index_map[(2, vertex_idx)] for vertex_idx in face)
+        merged_faces.append(new_face)
+
+    return merged_vertices, merged_faces
 
 
 def write_stl_binary(
