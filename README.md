@@ -9,7 +9,7 @@ A Python library for 3D geometric construction, mesh manipulation, and spherical
 - **Spherical geometry and coordinate transformations**
 - **3D mesh partitioning and manipulation**
 - **Geometric construction utilities**
-- **Face point cloud generation and processing**
+- **Human face point cloud generation and processing**
 - **Calibrated paper tools for precise printing**
 
 ## Features
@@ -40,7 +40,7 @@ These functions work with coordinate systems defined by origin, up vector, and o
 
 ### Mesh Processing
 - Mesh partitioning algorithms
-- Face point cloud generation
+- Human face point cloud generation
 - Region edge feature detection
 - Connector hint computation
 - Shell mapping and collinear connector merging
@@ -149,16 +149,16 @@ points = fibonacci_sphere(num_points=100, radius=1.0)
 
 ## Examples
 
-### Face Mesh STL Export
+### Human Face Mesh STL Export
 
-The `examples/create_face_stl.py` script demonstrates how to create 3D printable face meshes from point clouds and export them as STL files. This example showcases the complete workflow from point cloud generation to ready-to-print 3D models.
+The `examples/create_face_stl.py` script demonstrates how to create 3D printable human face meshes from point clouds and export them as STL files. This example showcases the complete workflow from human face point cloud generation to ready-to-print 3D models.
 
 #### Features
 
-- **Face Point Cloud Generation**: Creates anatomically accurate face point clouds
+- **Human Face Point Cloud Generation**: Creates anatomically accurate human face point clouds
 - **Mesh Triangulation**: Converts point clouds to triangulated meshes
 - **3D Printing Optimization**: Scales models to 200mm width with 2.5mm shell thickness
-- **Front/Back Partitioning**: Splits faces into mask-like front and back halves
+- **Front/Back Partitioning**: Splits human faces into mask-like front and back halves
 - **STL Export**: Generates ready-to-print STL files
 
 #### Usage
@@ -171,7 +171,7 @@ python create_face_stl.py
 This will generate STL files in the `face_stl_output/` directory:
 - `face_m_front.stl` - Front half (mask exterior)
 - `face_m_back.stl` - Back half (mask interior) 
-- `face_m_complete.stl` - Complete face model
+- `face_m_complete.stl` - Complete human face model
 
 #### Example Output
 
@@ -198,10 +198,10 @@ Step 5: Generating 3D printable shells...
 
 #### Applications
 
-- **3D Printing**: Ready-to-print face models and masks
-- **Prototyping**: Rapid face geometry prototyping
+- **3D Printing**: Ready-to-print human face models and masks
+- **Prototyping**: Rapid human face geometry prototyping
 - **Research**: Facial geometry analysis and visualization
-- **Art/Design**: Creative face-based sculptures and models
+- **Art/Design**: Creative human face-based sculptures and models
 
 The generated STL files can be:
 - Viewed in STL viewers (MeshLab, 3D Builder, online viewers)
@@ -210,7 +210,7 @@ The generated STL files can be:
 - Used as reference models for other applications
 
 ![Face Mesh Example](examples/Face.png)
-*Example of generated face mesh viewed in a 3D viewer*
+*Example of generated human face mesh viewed in a 3D viewer*
 
 ### Cylinder Mesh Creation and Merging
 
@@ -303,7 +303,7 @@ The resulting STL files are compatible with:
 | `geometries` | Basic geometric shape generation (icosahedron, etc.) |
 | `spherical_tools` | Spherical coordinate systems and transformations |
 | `construct_utils` | General construction utilities and validation |
-| `face_point_cloud` | Point cloud generation on mesh faces |
+| `face_point_cloud` | Human face point cloud generation |
 | `mesh_partition` | Advanced mesh partitioning algorithms |
 | `calibrated_paper` | Precise geometric output for printing |
 | `connector_utils` | Connector hint computation and merging |
